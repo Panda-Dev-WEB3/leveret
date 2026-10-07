@@ -1,0 +1,9 @@
+/target
+**/node_modules
+**/*.rs.bk
+.anchor
+.DS_Store
+test-ledger
+.env
+# program keypairs are backed up separately; never commit them
+/keys/*.json

@@ -1,0 +1,27 @@
+[package]
+name = "lvrt_factor"
+version = "0.1.0"
+description = "Leveret Factors: index registry, signed publishes, methodology timelock"
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "lvrt_factor"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "lvrt_common/idl-build"]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+
+[dependencies]
+anchor-lang = { version = "=1.1.2", features = ["init-if-needed"] }
+lvrt_common = { path = "../../crates/lvrt_common" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

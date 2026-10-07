@@ -1,0 +1,27 @@
+[package]
+name = "lvrt_gov"
+version = "0.1.0"
+description = "Leveret governance: 72h timelock executor and guardian"
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "lvrt_gov"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "lvrt_common/idl-build"]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+
+[dependencies]
+anchor-lang = "=1.1.2"
+lvrt_common = { path = "../../crates/lvrt_common" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

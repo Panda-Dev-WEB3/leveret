@@ -1,0 +1,11 @@
+[package]
+name = "lvrt_math"
+version = "0.1.0"
+edition = "2021"
+description = "Pure fixed-point pricing and risk math shared by every Leveret program and keeper"
+license = "Apache-2.0"
+
+[lib]
+name = "lvrt_math"
+
+[dependencies]

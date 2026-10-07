@@ -1,0 +1,30 @@
+[package]
+name = "lvrt_twins"
+version = "0.1.0"
+description = "Leveret Twins: perp-backed spot-style tokens"
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "lvrt_twins"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "lvrt_common/idl-build", "anchor-spl/idl-build", "lvrt_oracle/idl-build", "lvrt_engine/idl-build"]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+
+[dependencies]
+anchor-lang = { version = "=1.1.2", features = ["init-if-needed"] }
+anchor-spl = "=1.1.2"
+lvrt_oracle = { path = "../lvrt_oracle", features = ["cpi"] }
+lvrt_engine = { path = "../lvrt_engine", features = ["cpi"] }
+lvrt_common = { path = "../../crates/lvrt_common" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

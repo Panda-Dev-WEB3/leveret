@@ -1,0 +1,27 @@
+[toolchain]
+anchor_version = "1.1.2"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+lvrt_oracle = "CFG1eAfxM49c4wAtL2xuorZkH1SB1cHdG8gJyGQUo2P8"
+lvrt_engine = "DDwLPMgoXWAnCpDHYp1jSNg5bzW2mAJTvioqZHhyE3gD"
+lvrt_vault = "AdFxcb9gcQTPKFo5MyU7MK5M18orENK4ZNfd7vWBKh3h"
+lvrt_insurance = "DwkxsoEc8sQBBqBovGsHBDvrmomdcPqy9aK2zFcUZxhQ"
+lvrt_power = "ASwWQnPCrBMHryngMVhVzQTy4g5qeHena8kbDs3Z27N3"
+lvrt_factor = "3JWHCTuGFfP84R6waHT1ojGCa27TeAVM6WQmsJzZjpx9"
+lvrt_tickets = "38GVDZJaTDb28E8uwcYt23TjfdKESci4i7t1ywbQJVnM"
+lvrt_twins = "7Q2Rsett1NBhw6SY2iFMNZbFznoXfkW2msJ3pjJPuzXC"
+lvrt_gov = "2CvejCR36zZzmKgtBBP6G9jpVQCwwZ1AUe355t1Bci2E"
+lvrt_fee_router = "GxQSsXZi4uYAieZWyMBvk8c7dBbkKUQWJ5CoHKUHUeQF"
+
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "cargo test -p lvrt_tests"
+
+[hooks]
