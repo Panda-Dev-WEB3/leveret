@@ -1,0 +1,6 @@
+'use client';
+import {useState} from 'react';
+import Link from 'next/link';
+import {families} from '@/data/leveret';
+import {Icon} from './icons';
+export function ProductDeck(){const [active,setActive]=useState(0);return <section className="product-deck section"><div className="section-heading"><div><div className="eyebrow">SEVEN WAYS TO FIND YOUR EDGE</div><h2>Follow your<br/><em>own conviction.</em></h2></div><p>One account opens the whole landscape.<br/>Choose a family to explore.</p></div><div className="deck-layout"><div className="deck-list">{families.map((f,i)=><button key={f.slug} className={active===i?'active':''} onMouseEnter={()=>setActive(i)} onFocus={()=>setActive(i)} onClick={()=>setActive(i)} aria-pressed={active===i}><span className="deck-number">0{i+1}</span><span>{f.name}</span><Icon name="plus" size={21}/></button>)}</div><div className="deck-art"><img key={active} src={'/brand/'+families[active].asset.replace('.png','.webp')} alt={families[active].name+' brand composition'} loading="lazy"/><div className="deck-caption"><span>{families[active].subtitle}</span><Link className="btn dark small" href={'/products/'+families[active].slug+'/'}>Explore {families[active].name}</Link></div></div></div></section>}

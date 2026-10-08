@@ -1,0 +1,290 @@
+[
+  {
+    "path": "Block2/Iceland.png",
+    "source": "01-mountain-glass.png",
+    "width": 637,
+    "height": 718,
+    "photoWidth": 379,
+    "photoHeight": 452,
+    "frameRotation": 28.971480746702643,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Iceland.webp"
+  },
+  {
+    "path": "Block2/Norway.png",
+    "source": "02-portrait-one-balance.png",
+    "width": 662,
+    "height": 638,
+    "photoWidth": 450,
+    "photoHeight": 324,
+    "frameRotation": 8.560889571164607,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Norway.webp"
+  },
+  {
+    "path": "Block2/Japan.png",
+    "source": "03-lens-verified-prices.png",
+    "width": 582,
+    "height": 553,
+    "photoWidth": 450,
+    "photoHeight": 324,
+    "frameRotation": 17.684392026557745,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Japan.webp"
+  },
+  {
+    "path": "Block2/Morocco.png",
+    "source": "04-portrait-agent-rules.png",
+    "width": 755,
+    "height": 820,
+    "photoWidth": 379,
+    "photoHeight": 452,
+    "frameRotation": 18.67073259279863,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Morocco.webp"
+  },
+  {
+    "path": "Block2/Switzerland.png",
+    "source": "05-motion-one-transaction.png",
+    "width": 1005,
+    "height": 1014,
+    "photoWidth": 385,
+    "photoHeight": 541,
+    "frameRotation": -23.578414186602824,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Switzerland.webp"
+  },
+  {
+    "path": "Block2/Slovenia.png",
+    "source": "06-botanical-seven-families.png",
+    "width": 626,
+    "height": 808,
+    "photoWidth": 385,
+    "photoHeight": 544,
+    "frameRotation": -19.238644516908447,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Slovenia.webp"
+  },
+  {
+    "path": "Block2/Canada.png",
+    "source": "07-meadow-built-for-traders.png",
+    "width": 762,
+    "height": 735,
+    "photoWidth": 450,
+    "photoHeight": 324,
+    "frameRotation": -7.650650955359412,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Canada.webp"
+  },
+  {
+    "path": "Block2/Portugal.png",
+    "source": "08-cavern-every-price.png",
+    "width": 637,
+    "height": 718,
+    "photoWidth": 379,
+    "photoHeight": 452,
+    "frameRotation": 28.971480746702643,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Portugal.webp"
+  },
+  {
+    "path": "Block2/Spain.png",
+    "source": "09-floating-more-ways.png",
+    "width": 433,
+    "height": 697,
+    "photoWidth": 384,
+    "photoHeight": 539,
+    "frameRotation": -0.8184554616886155,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Spain.webp"
+  },
+  {
+    "path": "Block2/Greece.png",
+    "source": "10-botanical-editorial.png",
+    "width": 637,
+    "height": 718,
+    "photoWidth": 379,
+    "photoHeight": 452,
+    "frameRotation": 28.971480746702643,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Greece.webp"
+  },
+  {
+    "path": "Block2/Italy.png",
+    "source": "11-grass-one-balance.png",
+    "width": 556,
+    "height": 781,
+    "photoWidth": 422,
+    "photoHeight": 557,
+    "frameRotation": -7.675259019492589,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Italy.webp"
+  },
+  {
+    "path": "Block2/France.png",
+    "source": "12-meadow-one-account.png",
+    "width": 625,
+    "height": 804,
+    "photoWidth": 385,
+    "photoHeight": 541,
+    "frameRotation": 19.239492991311796,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/France.webp"
+  },
+  {
+    "path": "Block2/Austria.png",
+    "source": "01-mountain-glass.png",
+    "width": 990,
+    "height": 1018,
+    "photoWidth": 385,
+    "photoHeight": 540,
+    "frameRotation": -19.388567714677325,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Austria.webp"
+  },
+  {
+    "path": "Block2/Australia.png",
+    "source": "02-portrait-one-balance.png",
+    "width": 518,
+    "height": 468,
+    "photoWidth": 441,
+    "photoHeight": 326,
+    "frameRotation": -5.194428907734806,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Australia.webp"
+  },
+  {
+    "path": "Block2/Istanbul.png",
+    "source": "03-lens-verified-prices.png",
+    "width": 778,
+    "height": 767,
+    "photoWidth": 450,
+    "photoHeight": 324,
+    "frameRotation": -11.633633998940423,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/Istanbul.webp"
+  },
+  {
+    "path": "Block2/New Zealand.png",
+    "source": "04-portrait-agent-rules.png",
+    "width": 791,
+    "height": 783,
+    "photoWidth": 449,
+    "photoHeight": 324,
+    "frameRotation": -16.313852426260556,
+    "fit": "native paper silhouette; full-bleed artwork in photo aperture; original captions removed",
+    "webPath": "Block2/New Zealand.webp"
+  },
+  {
+    "path": "Block 3/Collage.png",
+    "source": "02-portrait-one-balance.png",
+    "width": 1504,
+    "height": 1616,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block 3/Collage.webp"
+  },
+  {
+    "path": "Block 3/pexels-arthousestudio-4344885.jpg",
+    "source": "08-cavern-every-price.png",
+    "width": 5760,
+    "height": 6400,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block 3/pexels-arthousestudio-4344885.webp"
+  },
+  {
+    "path": "Block4/OpenedImage1.png",
+    "source": "04-portrait-agent-rules.png",
+    "width": 2880,
+    "height": 3200,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block4/OpenedImage1.webp"
+  },
+  {
+    "path": "Block4/ClosedImage1.png",
+    "source": "04-portrait-agent-rules.png",
+    "width": 240,
+    "height": 800,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block4/ClosedImage1.webp"
+  },
+  {
+    "path": "Block4/OpenedImage2.png",
+    "source": "05-motion-one-transaction.png",
+    "width": 2880,
+    "height": 3200,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block4/OpenedImage2.webp"
+  },
+  {
+    "path": "Block4/ClosedImage2.png",
+    "source": "05-motion-one-transaction.png",
+    "width": 1440,
+    "height": 3200,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block4/ClosedImage2.webp"
+  },
+  {
+    "path": "Block4/OpenedImage3.png",
+    "source": "10-botanical-editorial.png",
+    "width": 2880,
+    "height": 3200,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block4/OpenedImage3.webp"
+  },
+  {
+    "path": "Block4/ClosedImage3.png",
+    "source": "10-botanical-editorial.png",
+    "width": 1440,
+    "height": 3200,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block4/ClosedImage3.webp"
+  },
+  {
+    "path": "Block4/OpenedImage4.png",
+    "source": "12-meadow-one-account.png",
+    "width": 2880,
+    "height": 3200,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block4/OpenedImage4.webp"
+  },
+  {
+    "path": "Block4/ClosedImage4.png",
+    "source": "12-meadow-one-account.png",
+    "width": 1440,
+    "height": 3200,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block4/ClosedImage4.webp"
+  },
+  {
+    "path": "Block4/DefaultImage.png",
+    "source": "04-portrait-agent-rules.png",
+    "width": 1440,
+    "height": 3200,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block4/DefaultImage.webp"
+  },
+  {
+    "path": "Block 5/BackgroundImage.png",
+    "source": "12-meadow-one-account.png",
+    "width": 5760,
+    "height": 4308,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block 5/BackgroundImage.webp"
+  },
+  {
+    "path": "Block 5/01_foreground 1.png",
+    "source": "12-meadow-one-account.png",
+    "width": 5760,
+    "height": 3856,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block 5/01_foreground 1.webp"
+  },
+  {
+    "path": "Block 5/03_mountains_midground 1.png",
+    "source": "10-botanical-editorial.png",
+    "width": 2688,
+    "height": 1800,
+    "fit": "full bleed cover; no padding",
+    "webPath": "Block 5/03_mountains_midground 1.webp"
+  }
+]

@@ -1,0 +1,24 @@
+'use client';
+import Link from 'next/link';
+import {useState} from 'react';
+import {markets,families,money} from '@/data/leveret';
+import {Icon,familyIcons} from './icons';
+import {BloomMark} from './bloom-ui';
+const PAGE_SIZE=6;
+export function MarketExplorer(){
+ const [filter,setFilter]=useState('All');const [query,setQuery]=useState('');const [sort,setSort]=useState('name');const [page,setPage]=useState(0);const [symbol,setSymbol]=useState('');
+ const list=markets.filter(m=>(filter==='All'||m.family===filter)&&(m.symbol+' '+m.name).toLowerCase().includes(query.toLowerCase())).sort((a,b)=>sort==='change'?b.change-a.change:sort==='price'?b.price-a.price:a.symbol.localeCompare(b.symbol));
+ const pages=Math.ceil(list.length/PAGE_SIZE);const currentPage=Math.min(page,Math.max(0,pages-1));const shown=list.slice(currentPage*PAGE_SIZE,(currentPage+1)*PAGE_SIZE);
+ const selected=list.find(m=>m.symbol===symbol)||shown[0];
+ const selectFamily=(f:string)=>{setFilter(f);setPage(0);setSymbol('')};
+ return <div className="market-conservatory"><div className="market-browser-heading"><div><span className="eyebrow">THE MARKET CONSERVATORY</span><h2>Find your <em>field.</em></h2></div><p>Browse by family. Choose a market.<br/>{' '}Keep your next move in focus.</p></div>
+  <div className="market-workbench"><aside className="market-family-rail"><span className="eyebrow">PRODUCT FAMILIES</span><div aria-label="Market product family">{['All',...families.map(f=>f.name)].map(f=><button key={f} aria-pressed={filter===f} onClick={()=>selectFamily(f)}><Icon name={f==='All'?'grid':familyIcons[f]} size={21} botanical/><span>{f==='All'?'All markets':f}</span><small>{f==='All'?markets.length:markets.filter(m=>m.family===f).length}</small></button>)}</div><span className="market-family-footnote">ONE ACCOUNT<br/>SEVEN EXPRESSIONS</span></aside>
+   <div className="market-browser-main"><div className="market-browser-controls"><label className="search-input"><Icon name="search" size={17}/><input aria-label="Search markets" value={query} onChange={e=>{setQuery(e.target.value);setPage(0);setSymbol('')}} placeholder="Search a name or symbol"/></label><select aria-label="Sort markets" value={sort} onChange={e=>{setSort(e.target.value);setPage(0);setSymbol('')}}><option value="name">Name</option><option value="change">Change</option><option value="price">Price</option></select></div>
+    {shown.length>0?<div className="market-browser-body"><div className="market-tile-area"><div className="market-tiles" aria-label="Choose a market">{shown.map(m=><button className="market-specimen" key={m.symbol} aria-pressed={selected?.symbol===m.symbol} onClick={()=>setSymbol(m.symbol)}><span className="specimen-top"><span className="specimen-symbol">{m.symbol}</span><span className={'specimen-change '+(m.change>=0?'rise':'fall')}>{m.change>=0?'+':''}{m.change.toFixed(2)}%</span></span><span className="specimen-name">{m.name}</span><strong>${money(m.price)}</strong><span className="specimen-family">{m.family}<Icon name="arrow" size={16}/></span></button>)}</div><div className="market-pagination"><span aria-live="polite">{currentPage*PAGE_SIZE+1}–{Math.min((currentPage+1)*PAGE_SIZE,list.length)} <span>of {list.length}</span></span><div><button aria-label="Previous markets" disabled={currentPage===0} onClick={()=>{setPage(p=>p-1);setSymbol('')}}><Icon name="chevron" size={18}/></button><button aria-label="Next markets" disabled={currentPage+1>=pages} onClick={()=>{setPage(p=>p+1);setSymbol('')}}><Icon name="chevron" size={18}/></button></div></div></div>
+     {selected&&<article className="market-focus" key={selected.symbol}><div className="market-focus-orbit"><BloomMark/></div><span className="eyebrow">{selected.family.toUpperCase()} / IN FOCUS</span><h3>{selected.name}</h3><span className="focus-price">${money(selected.price)}</span><span className="focus-price-label">INDICATIVE REFERENCE PRICE</span><dl><div><dt>Availability</dt><dd>{selected.session}</dd></div><div><dt>Exposure limit</dt><dd>{selected.maxLeverage}×</dd></div><div><dt>Reference spread</dt><dd>{selected.spreadBps} bps</dd></div></dl><Link className="btn dark" href={'/dashboard/?market='+encodeURIComponent(selected.symbol)}>Open {selected.symbol}<Icon name="arrow" size={17}/></Link></article>}
+    </div>:<div className="market-browser-empty"><BloomMark/><h3>{filter==='Small Caps'?'A guarded frontier.':'No matching markets.'}</h3><p>{filter==='Small Caps'?'Names join this family once the feed, depth and listing gates are complete.':'Try a different name, symbol or family.'}</p><button className="text-link" onClick={()=>{selectFamily('All');setQuery('')}}>View all markets<Icon name="arrow" size={17}/></button></div>}
+    <p className="reference-note">Indicative reference values · Execution needs a fresh signed oracle report.</p>
+   </div>
+  </div>
+ </div>;
+}

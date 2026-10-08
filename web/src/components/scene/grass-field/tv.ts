@@ -1,0 +1,6 @@
+import * as THREE from 'three';
+export interface TvLightState {position:THREE.Vector3;direction:THREE.Vector3;flicker:number}
+export interface TvHandle {object:THREE.Object3D;light:TvLightState;screenUniforms:{uCore:THREE.IUniform<THREE.Color>;uEdge:THREE.IUniform<THREE.Color>;uIntensity:THREE.IUniform<number>;uEdgeStart:THREE.IUniform<number>;uCentreLift:THREE.IUniform<number>};update:(elapsed:number,pointer:{x:number;y:number}|null,cameraPosition:THREE.Vector3)=>void;dispose:()=>void}
+export interface FloatingTvOptions {manager?:THREE.LoadingManager;onSettled?:()=>void;maxTextureSize?:number}
+/** Retain Longplay's original crest anchor and camera framing, with no TV geometry, assets or light. */
+export function createFloatingTv(restPosition:THREE.Vector3,{onSettled}:FloatingTvOptions={}):TvHandle{const object=new THREE.Group();object.position.copy(restPosition);queueMicrotask(()=>onSettled?.());return {object,light:{position:restPosition.clone(),direction:new THREE.Vector3(0,0,1),flicker:0},screenUniforms:{uCore:{value:new THREE.Color('#ddad74')},uEdge:{value:new THREE.Color('#dfbda5')},uIntensity:{value:0},uEdgeStart:{value:.86},uCentreLift:{value:0}},update:()=>{},dispose:()=>{}}}

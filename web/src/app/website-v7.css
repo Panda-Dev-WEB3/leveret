@@ -1,0 +1,142 @@
+/* Copper petals, etched veins and warm paper run through every new interaction. */
+.bloom-mark{display:block;overflow:visible;color:#a96e43}
+.bloom-mark .bloom-petal{fill:#f2d6b7;stroke:currentColor;stroke-width:.7;transition:fill 350ms,stroke 350ms}
+.bloom-mark .petal-vein{stroke:currentColor;stroke-width:.55;opacity:.45}
+.bloom-mark .bloom-heart{fill:#f9eddb;stroke:currentColor;stroke-width:.65}
+.bloom-mark .bloom-center{fill:#b67b4c}
+.bloom-busy{overflow:hidden!important}
+.bloom-site-content{min-height:100vh}
+.hero-field-layer{transition:none;will-change:auto}
+.bloom-overlay{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;isolation:isolate;overflow:hidden;cursor:wait;color:#966038}
+.bloom-overlay:before{content:'';position:absolute;inset:0;background:#f4e7d2;z-index:-1}
+.bloom-curtain{position:absolute;inset:0;display:grid;place-items:center;z-index:-1}
+.curtain-flower{position:absolute;width:250vmax;height:250vmax;max-width:none;color:#d4ad81}
+.curtain-flower .bloom-petal{fill:#f4e7d2;stroke:#d1ae84;stroke-width:.08;transform-origin:100px 100px}
+.curtain-flower .petal-vein{stroke-width:.08;opacity:.18;transform-origin:100px 100px}
+.curtain-flower :is(.bloom-heart,.bloom-center){fill:#f4e7d2;stroke:none;transform-origin:center}
+.bloom-preloader-card{display:flex;flex-direction:column;align-items:center;text-align:center;width:280px;position:relative}
+.preloader-emblem{width:138px;height:138px;position:relative;margin-bottom:19px}
+.preloader-emblem>.bloom-mark{width:100%;height:100%;animation:preloader-breathe 2.6s ease-in-out infinite}
+.preloader-emblem .bloom-petal{fill:#e9c5a2;stroke:#b78254}
+.preloader-emblem>.bloom-mark .bloom-center{fill:#f7ead5}
+.preloader-emblem>.bloom-mark .bloom-heart{fill:#f7ead5}
+.preloader-emblem>img{position:absolute;width:32px;left:50%;top:50%;transform:translate(-50%,-50%);filter:brightness(.72)}
+.preloader-wordmark{font-family:Instrument,Georgia,serif;font-size:64px;line-height:1;letter-spacing:-.035em}
+.preloader-tagline{font-size:9px;letter-spacing:.23em;margin-top:19px}
+.preloader-progress{width:138px;height:2px;background:#d8bc99;margin-top:30px;overflow:hidden}
+.preloader-progress>span{display:block;width:100%;height:100%;background:#ac7144;transform-origin:left;transition:transform 400ms}
+.preloader-caption{margin-top:15px;font-size:11px;letter-spacing:.025em;color:#a47b55}
+.bloom-loading:before,.bloom-waiting:before{opacity:1}
+.bloom-loading .curtain-flower{opacity:.24}
+.bloom-closing:before{animation:curtain-cover var(--bloom-close-ms) both}
+.bloom-closing .curtain-flower :is(.bloom-petal,.petal-vein){animation:petal-cover calc(var(--bloom-close-ms) - 70ms) cubic-bezier(.22,.65,.24,1) both;animation-delay:calc(var(--petal-index)*7ms)}
+.bloom-closing .curtain-flower :is(.bloom-heart,.bloom-center){animation:petal-cover calc(var(--bloom-close-ms) - 70ms) both}
+.bloom-opening:before{animation:curtain-uncover var(--bloom-open-ms) both}
+.bloom-opening .curtain-flower :is(.bloom-petal,.petal-vein){animation:petal-uncover calc(var(--bloom-open-ms) - 150ms) cubic-bezier(.45,0,.25,1) both;animation-delay:calc(var(--petal-index)*12ms)}
+.bloom-opening .curtain-flower :is(.bloom-heart,.bloom-center){animation:petal-uncover calc(var(--bloom-open-ms) - 150ms) both}
+@keyframes preloader-breathe{50%{transform:scale(1.035) rotate(4deg);filter:drop-shadow(0 0 10px #d29d6c45)}}
+@keyframes petal-cover{from{transform:scale(.008);opacity:.35}to{transform:scale(1);opacity:1}}
+@keyframes petal-uncover{from{transform:scale(1);opacity:1}to{transform:scale(.006);opacity:0}}
+@keyframes curtain-cover{0%,70%{opacity:0}100%{opacity:1}}
+@keyframes curtain-uncover{0%{opacity:1}25%,100%{opacity:0}}
+
+/* A short, paginated market browser with a persistent focus panel. */
+.market-conservatory{color:#91613e}
+.market-browser-heading{display:flex;align-items:end;justify-content:space-between;gap:35px;margin:30px 0 38px}
+.market-browser-heading h2{font-size:clamp(3.3rem,5.6vw,5.8rem);margin-top:19px}
+.market-browser-heading>p{font-size:15px;line-height:1.75;color:#a27c54;padding-bottom:7px}
+.market-workbench{display:grid;grid-template-columns:190px minmax(0,1fr);border-top:1px solid #c4a17a;border-bottom:1px solid #c4a17a;background:linear-gradient(120deg,#efdfc855,#fff5e340)}
+.market-family-rail{border-right:1px solid #cfb391;padding:28px 19px 28px 0;display:flex;flex-direction:column;min-width:0}
+.market-family-rail>.eyebrow{font-size:9px;letter-spacing:.12em;margin:6px 0 23px;color:#a88057}
+.market-family-rail>div{display:flex;flex-direction:column;gap:5px}
+.market-family-rail button{display:flex;align-items:center;gap:10px;text-align:left;width:100%;border:0;border-radius:0 25px 25px 0;background:transparent;padding:12px 10px;color:#a78058;font-size:13px;transition:background 200ms,color 200ms}
+.market-family-rail button svg{flex-shrink:0}.market-family-rail button small{margin-left:auto;font-size:10px;opacity:.7}
+.market-family-rail button[aria-pressed=true]{background:#e6ccaa;color:#87532f}.market-family-rail button:hover{background:#e8d4b8}
+.market-family-footnote{font-size:8px;line-height:1.7;letter-spacing:.13em;color:#ab8860;margin-top:auto;padding:28px 10px 0}
+.market-browser-main{padding:26px 0 21px 27px;min-width:0}
+.market-browser-controls{display:flex;align-items:center;gap:14px;margin-bottom:23px}
+.market-browser-controls .search-input{flex:1;min-width:0;border-color:#cdb18e;background:#fbf0df99;border-radius:24px;padding:12px 17px;color:#ac865e}
+.market-browser-controls input{color:#875d38;font-size:12px}.market-browser-controls input::placeholder{color:#ae8c65;opacity:1}
+.market-browser-controls select{width:110px;background:transparent;border:1px solid #cdb18e;border-radius:24px;padding:12px;color:#91653e;font-size:12px}
+.market-browser-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,.8fr);gap:25px}
+.market-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.market-specimen{position:relative;display:flex;flex-direction:column;min-width:0;min-height:155px;padding:18px 17px 14px;background:#f7ead7;border:1px solid #d4b897;border-radius:25px 5px 25px 5px;text-align:left;color:#94623d;transition:background 200ms,border-color 200ms,box-shadow 200ms,transform 200ms;overflow:hidden}
+.market-specimen:after{content:'';position:absolute;right:5px;bottom:5px;width:30px;height:30px;background:url('/brand/floral-corner.webp') center/contain no-repeat;transform:rotate(180deg);opacity:.2;pointer-events:none}
+.market-specimen[aria-pressed=true]{background:#edcfaa;border-color:#b68153;box-shadow:inset 0 0 0 3px #fff2de88,0 5px 17px #ae774713}.market-specimen:hover{border-color:#b88758;transform:translateY(-2px)}
+.specimen-top{display:flex;justify-content:space-between;align-items:center;gap:7px;min-width:0}
+.specimen-symbol{font-size:15px;letter-spacing:.015em;overflow-wrap:anywhere}
+.specimen-change{font-size:10px;white-space:nowrap}.specimen-change.rise{color:#947333}.specimen-change.fall{color:#a85e45}
+.specimen-name{font-size:10px;color:#a47c54;margin:6px 0 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.market-specimen>strong{font-family:Instrument,serif;font-weight:400;font-size:29px;line-height:1.1}
+.specimen-family{display:flex;justify-content:space-between;align-items:center;font-size:9px;color:#ac8359;margin-top:auto;padding-top:13px;position:relative;z-index:1}
+.specimen-family>svg{opacity:.5}.market-specimen[aria-pressed=true] .specimen-family>svg{opacity:1}
+.market-pagination,.garden-pagination{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-top:20px;font-size:11px;color:#956c45}
+.market-pagination>span>span{color:#b08a62}.market-pagination>div,.garden-pagination>div{display:flex;gap:7px}
+.market-pagination button,.garden-pagination button{display:grid;place-items:center;width:34px;height:34px;border:1px solid #c5a47e;border-radius:50%;background:transparent;color:#95603a;transition:background 200ms}
+.market-pagination button:hover,.garden-pagination button:hover{background:#e5caa6}
+.market-pagination button:first-child>svg,.garden-pagination button:first-child>svg{transform:rotate(180deg)}
+.market-pagination button:last-child>svg,.garden-pagination button:last-child>svg{transform:none}
+.market-focus{background:linear-gradient(150deg,#e8c5a0,#efdbbd);border:1px solid #c69b6f;border-radius:90px 90px 7px 7px;padding:20px 22px 22px;text-align:center;position:relative;display:flex;align-items:center;flex-direction:column;animation:panel-enter 350ms ease both;min-width:0}
+.market-focus-orbit{position:relative;width:115px;height:115px;margin-bottom:13px;display:grid;place-items:center}
+.market-focus-orbit>.bloom-mark{position:absolute;width:100%;height:100%;color:#b58758}.market-focus-orbit .bloom-petal{fill:#f0d9bc55}.market-focus-orbit .bloom-heart{fill:#f4e2c8}
+.market-focus-orbit>span{position:relative;z-index:1;font-size:16px;max-width:80%;overflow-wrap:anywhere}
+.market-focus>.eyebrow{font-size:8px;letter-spacing:.1em;justify-content:center;line-height:1.6}
+.market-focus h3{font-size:29px;margin:12px 0 11px;overflow-wrap:anywhere}
+.focus-price{font-family:Instrument,serif;font-size:36px;line-height:1.1;color:#87522f}.focus-price-label{font-size:7px;letter-spacing:.1em;margin-top:8px;color:#a47750}
+.market-focus dl{width:100%;margin:22px 0;font-size:10px;text-align:left}.market-focus dl>div{display:flex;justify-content:space-between;align-items:start;gap:15px;border-top:1px solid #c4a07988;padding:11px 0}.market-focus dd{text-align:right;margin:0;color:#875632}.market-focus dt{color:#a47b52}
+.market-focus .btn{margin-top:auto;width:100%;padding:13px 14px;gap:18px;min-height:43px;font-size:12px;background:#a06a40;color:#fff1d9;box-shadow:inset 0 0 0 3px #d7ac7d30;border:1px solid #8d5b35;border-radius:22px}.market-focus .btn:hover{background:#8c5831}
+.market-browser-empty{min-height:450px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:20px;padding:35px}
+.market-browser-empty>.bloom-mark{width:100px;height:100px}.market-browser-empty h3{font-size:36px}.market-browser-empty p{max-width:380px;font-size:14px;color:#a57d54}
+.market-browser-main .reference-note{font-size:10px;color:#a48460;margin-top:22px}
+
+/* Scroll brings each numbered bloom and its boundary into view. */
+.protocol-petal-path{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:8%;background:linear-gradient(120deg,#efd5b4,#f3e4cd 55%,#eed8bb);color:#93613c;position:relative}
+.petal-path-intro{position:sticky;top:calc(var(--nav-height) + 42px);align-self:start}
+.petal-path-intro h2{font-size:clamp(3.5rem,5.4vw,6rem);margin:26px 0 24px;line-height:1.07}.petal-path-intro>p{max-width:360px;color:#a67e54;font-size:16px}
+.petal-path-seal{display:flex;align-items:center;gap:24px;margin:39px 0 29px}.petal-path-seal>.bloom-mark{width:84px;height:84px;color:#b78252}.petal-path-seal span{font-size:10px;letter-spacing:.12em;line-height:1.9;color:#9b734c}
+.petal-scroll-note>svg{transform:rotate(90deg)}
+.petal-scroll-note{display:flex;align-items:center;gap:12px;font-size:11px;letter-spacing:.03em;color:#b18b60}
+.petal-path-trail{list-style:none;padding:0;margin:0;position:relative}
+.petal-path-trail:before{content:'';position:absolute;top:55px;bottom:135px;left:54px;width:1px;background:linear-gradient(#d1ac81,#b88350,#d1ac81);opacity:.65}
+.petal-step{position:relative;display:grid;grid-template-columns:110px minmax(0,1fr);gap:27px;padding:0 0 57px;min-height:215px}.petal-step:last-child{padding-bottom:0}
+.petal-step-number{position:relative;width:110px;height:110px;display:grid;place-items:center;align-self:start}
+.petal-step-number>.bloom-mark{position:absolute;inset:0;width:100%;height:100%;opacity:.28;transform:scale(.7);transition:transform 800ms cubic-bezier(.2,.7,.3,1),opacity 650ms,filter 500ms;color:#b68a59}
+.petal-step-number .bloom-petal{fill:#f1dfc5;stroke-width:1}.petal-step-number .bloom-heart{fill:#f5e7d2;stroke-width:1}.petal-step-number .bloom-center{fill:#f5e7d2}
+.petal-step-number>span{position:relative;font-family:Instrument,serif;font-size:26px;color:#b0926b;opacity:.3;transform:scale(.8);transition:opacity 600ms,transform 700ms,color 500ms}
+.petal-seen .petal-step-number>.bloom-mark{opacity:1;transform:scale(1)}.petal-seen .petal-step-number>span{opacity:1;transform:none;color:#a17347}
+.petal-active .petal-step-number>.bloom-mark{filter:drop-shadow(0 0 14px #c58a4f75);transform:scale(1.045);color:#a36635}.petal-active .bloom-petal{fill:#ecc79c;stroke-width:1.25}.petal-active .petal-step-number>span{color:#85522d}
+.petal-seen .petal-step-number .bloom-petal{animation:step-petal 750ms cubic-bezier(.2,.7,.3,1) both;animation-delay:calc(var(--petal-index)*55ms);transform-origin:100px 100px}
+.petal-step-copy{padding-top:13px;opacity:.12;transform:translateY(23px);transition:opacity 800ms 150ms,transform 800ms 150ms}
+.petal-seen .petal-step-copy{opacity:1;transform:none}
+.petal-step-label{font-size:8px;letter-spacing:.15em;color:#b18b61}.petal-step h3{font-size:34px;line-height:1.08;margin:14px 0 16px;color:#9a6b43}
+.petal-step p{font-size:14px;line-height:1.8;color:#a17c55}.petal-active h3{color:#85502c}
+.petal-step-line{display:block;height:1px;background:#cdae86;margin-top:25px;position:relative;overflow:hidden}.petal-step-line:after{content:'';display:block;width:100%;height:100%;background:#ad7547;transform:scaleX(0);transform-origin:left;transition:transform 1s 250ms}.petal-seen .petal-step-line:after{transform:scaleX(1)}
+@keyframes step-petal{from{transform:scale(.2);opacity:.2}to{transform:scale(1);opacity:1}}
+
+/* A living architecture diagram: each petal has a specific responsibility. */
+.program-garden{margin-top:15px;border-top:1px solid #c9a67e;border-bottom:1px solid #c9a67e;color:#91603a}
+.garden-toolbar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:24px 0;border-bottom:1px solid #d6b995}
+.garden-groups{display:flex;flex-wrap:wrap;gap:5px}.garden-groups button{border:1px solid transparent;background:transparent;color:#ac8259;padding:10px 14px;border-radius:23px;font-size:11px;transition:background 200ms,color 200ms}.garden-groups button[aria-pressed=true]{border-color:#c7a27a;background:#edd6b8;color:#8b5934}.garden-groups button:hover{background:#eeddc4}
+.garden-toolbar>span{font-size:8px;letter-spacing:.12em;color:#ac845b;text-align:right}
+.garden-layout{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr);align-items:center;gap:40px;padding:40px 0}
+.program-bloom{position:relative;width:100%;aspect-ratio:1;isolation:isolate}
+.program-flower{position:absolute;width:78%;height:78%;left:11%;top:11%;color:#c69b6f;z-index:-1;transition:transform 700ms}
+.program-flower .bloom-petal{fill:#f1dfc5;stroke-width:.65}.program-flower .selected-petal .bloom-petal{fill:#e3b582;stroke:#aa7445;filter:drop-shadow(0 0 3px #be874740)}.program-flower .selected-petal .petal-vein{opacity:.75}
+.program-flower .bloom-heart{fill:#f5e9d5;stroke:none}.program-flower .bloom-center{fill:#f5e9d5}
+.garden-heart{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:flex;align-items:center;flex-direction:column;gap:9px;width:28%;text-align:center}.garden-heart img{width:42px;filter:brightness(.78)}.garden-heart strong{font-family:Instrument,serif;font-weight:400;font-size:35px;line-height:1}.garden-heart>span{font-size:7px;letter-spacing:.12em;white-space:nowrap;color:#b18a60}
+.program-petal-node{position:absolute;left:var(--node-x);top:var(--node-y);transform:translate(-50%,-50%);background:#f6e8d2;border:1px solid #cba77f;border-radius:50% 50% 48% 12%;width:83px;height:64px;color:#a97d52;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;transition:background 250ms,color 250ms,box-shadow 250ms,border-color 250ms,opacity 250ms}
+.program-petal-node>span{font-size:8px;letter-spacing:.1em;color:#b89167}.program-petal-node>strong{font-size:10px;font-weight:400}.program-petal-node[aria-pressed=true]{background:#b47c4c;color:#fff0d9;border-color:#9f6538;box-shadow:0 0 24px #c6925e44,inset 0 0 0 3px #f4d7b54d}.program-petal-node[aria-pressed=true]>span{color:#ecd1ae}.program-petal-node:hover{border-color:#a57144;background:#edcfaa}.program-petal-node[aria-pressed=true]:hover{background:#9b643b}.program-petal-node.petal-muted{opacity:.25}
+.garden-caption{position:absolute;bottom:-16px;left:0;width:100%;text-align:center;font-size:8px;letter-spacing:.12em;color:#b1906d}
+.program-focus{align-self:stretch;min-width:0;border-left:1px solid #d4b58f;padding:15px 0 10px 35px;display:flex;flex-direction:column}
+.program-focus-content{animation:panel-enter 350ms ease both}.program-focus .eyebrow{font-size:9px;letter-spacing:.14em;color:#ad8057}
+.program-focus-title{display:flex;align-items:center;justify-content:space-between;gap:20px;margin:24px 0 12px}.program-focus-title h3{font-size:clamp(2.6rem,4.3vw,4.3rem);line-height:1.08;color:#8b552f;overflow-wrap:anywhere}.program-focus-title>.bloom-mark{width:55px;height:55px;flex:0 0 55px;color:#c3976a}.program-focus code{font-size:11px;letter-spacing:.01em;background:#ecd5b8;border:1px solid #d7b792;border-radius:20px;padding:7px 12px;display:inline-block;color:#a3744a}
+.program-focus h4{font-family:Instrument,serif;font-weight:400;font-size:27px;line-height:1.2;letter-spacing:-.02em;margin:29px 0 19px;color:#a27147}.program-focus p{font-size:14px;line-height:1.9;color:#a1815b;max-width:400px}
+.program-root-note{display:flex;align-items:center;gap:17px;border-top:1px solid #d7bc99;padding-top:22px;margin-top:28px;color:#a78258}.program-root-note>span{font-size:10px;line-height:1.8}.program-root-note>svg{flex-shrink:0}
+.garden-pagination{margin-top:auto;padding-top:28px}.garden-pagination>span{font-size:22px;font-family:Instrument,serif;color:#93613b}.garden-pagination small{font-family:Inter,sans-serif;font-size:9px;color:#b2926f;margin-left:5px}
+.program-garden+.architecture-services{margin-top:42px}
+@media(min-width:1600px){.market-specimen{min-height:175px;padding:22px}.market-focus{padding:28px}.garden-layout{gap:70px}.program-petal-node{width:95px;height:75px}.program-petal-node>strong{font-size:12px}}
+@media(max-width:1100px){.market-workbench{grid-template-columns:160px minmax(0,1fr)}.market-family-rail{padding-right:13px}.market-family-rail button{padding:12px 8px;gap:8px;font-size:12px}.market-browser-main{padding-left:20px}.market-browser-body{gap:16px;grid-template-columns:minmax(0,1fr) minmax(210px,.8fr)}.market-tiles{gap:9px}.market-specimen{padding:16px 13px;min-height:155px}.specimen-top{flex-wrap:wrap;gap:5px}.market-focus{padding:20px 16px}.garden-layout{gap:22px}.program-focus{padding-left:25px}.program-petal-node{width:70px;height:57px}.program-petal-node>strong{font-size:9px}.petal-step{gap:19px;grid-template-columns:90px minmax(0,1fr)}.petal-step-number{width:90px;height:90px}.petal-path-trail:before{left:44px}.petal-step h3{font-size:30px}}
+@media(max-width:850px){.market-workbench{grid-template-columns:1fr}.market-family-rail{border-right:0;border-bottom:1px solid #cfb391;padding:19px 0 15px}.market-family-rail>.eyebrow{margin:0 0 15px}.market-family-rail>div{flex-direction:row;overflow-x:auto;gap:8px;padding-bottom:6px}.market-family-rail button{border:1px solid #d0b18b;border-radius:23px;padding:10px 14px;width:auto;white-space:nowrap;font-size:12px}.market-family-rail button small{margin-left:5px}.market-family-footnote{display:none}.market-browser-main{padding:22px 0}.market-browser-body{grid-template-columns:minmax(0,1fr) minmax(230px,.85fr);gap:20px}.market-specimen{min-height:152px}.garden-layout{grid-template-columns:1fr;gap:45px;padding-top:30px}.program-bloom{max-width:490px;margin:0 auto}.program-petal-node{width:78px;height:62px}.program-petal-node>strong{font-size:10px}.program-focus{border-left:0;border-top:1px solid #c9a780;padding:30px 8px 0;min-height:420px}.program-focus-title h3{font-size:48px}.program-focus p{max-width:none}.garden-toolbar{align-items:start}.garden-toolbar>span{max-width:110px;line-height:1.7}.protocol-petal-path{gap:5%}.petal-path-intro h2{font-size:3.5rem}.petal-path-intro>.eyebrow{font-size:9px}.petal-step{grid-template-columns:75px minmax(0,1fr);gap:14px;padding-bottom:44px}.petal-step-number{width:75px;height:75px}.petal-path-trail:before{left:37px}.petal-step-number>span{font-size:22px}.petal-step h3{font-size:27px}.petal-step p{font-size:13px}.petal-step-copy{padding-top:6px}.petal-path-seal{gap:15px}.petal-path-seal>.bloom-mark{width:65px;height:65px}.petal-path-seal span{font-size:8px}}
+@media(max-width:600px){.market-browser-heading{display:block;margin:8px 0 30px}.market-browser-heading h2{font-size:3.6rem}.market-browser-heading>p{margin-top:24px;font-size:13px}.market-browser-heading>p br{display:none}.market-family-rail button{font-size:11px;padding:10px 12px;gap:7px}.market-family-rail button>svg{width:18px;height:18px}.market-browser-controls{gap:9px}.market-browser-controls .search-input{padding:12px 13px}.market-browser-controls input{font-size:11px}.market-browser-controls select{width:89px;font-size:11px}.market-browser-body{grid-template-columns:1fr;gap:27px}.market-specimen{min-height:143px;padding:16px}.specimen-symbol{font-size:14px}.specimen-top{flex-wrap:nowrap}.specimen-change{font-size:9px}.specimen-name{margin-bottom:10px}.market-specimen>strong{font-size:28px}.market-focus{border-radius:60px 60px 7px 7px;padding:27px 24px;display:grid;grid-template-columns:110px minmax(0,1fr);column-gap:19px;text-align:left;align-items:start}.market-focus-orbit{grid-row:1/6;width:110px;height:110px;margin:4px 0 0}.market-focus>.eyebrow{justify-content:start;font-size:7px}.market-focus h3{font-size:26px;margin:9px 0 11px}.focus-price{font-size:32px}.focus-price-label{font-size:6px;letter-spacing:.03em}.market-focus dl{grid-column:1/-1;margin:23px 0 19px;font-size:11px}.market-focus .btn{grid-column:1/-1}.market-browser-main .reference-note{font-size:9px;line-height:1.7}.market-browser-empty{min-height:370px;padding:25px 15px}.protocol-petal-path{display:block;padding-top:65px;padding-bottom:65px}.petal-path-intro{position:static;margin-bottom:52px}.petal-path-intro h2{font-size:3.9rem;line-height:1.02;margin:22px 0}.petal-path-intro>p{font-size:14px}.petal-path-intro>.eyebrow{font-size:9px}.petal-path-seal{margin:29px 0 24px}.petal-path-seal span{font-size:9px}.petal-step{grid-template-columns:85px minmax(0,1fr);gap:17px;min-height:205px;padding-bottom:37px}.petal-step-number{width:85px;height:85px}.petal-path-trail:before{left:42px;bottom:155px}.petal-step-number>span{font-size:25px}.petal-step-label{font-size:7px;letter-spacing:.1em}.petal-step-copy{padding-top:8px}.petal-step h3{font-size:30px;margin:11px 0 14px}.petal-step p{font-size:12px;line-height:1.9}.petal-step-line{margin-top:21px}.garden-toolbar{display:block;padding:18px 0}.garden-groups{gap:3px}.garden-groups button{font-size:10px;padding:9px 11px}.garden-toolbar>span{display:block;max-width:none;text-align:left;margin-top:17px;font-size:7px;letter-spacing:.12em}.garden-layout{gap:42px;padding-top:33px}.program-petal-node{width:60px;height:50px;gap:4px}.program-petal-node>span{font-size:7px}.program-petal-node>strong{font-size:8px}.garden-heart{gap:7px}.garden-heart img{width:30px}.garden-heart strong{font-size:27px}.garden-heart>span{font-size:5px}.garden-caption{font-size:6px;letter-spacing:.11em;bottom:-18px}.program-focus{padding:27px 0 0;min-height:410px}.program-focus .eyebrow{font-size:8px}.program-focus-title h3{font-size:44px}.program-focus-title{margin:19px 0 13px}.program-focus-title>.bloom-mark{width:45px;height:45px;flex-basis:45px}.program-focus code{font-size:10px}.program-focus h4{font-size:27px;margin:26px 0 17px}.program-focus p{font-size:13px}.program-root-note{margin-top:24px;padding-top:20px}.garden-pagination{padding-top:23px}.preloader-emblem{width:115px;height:115px}.preloader-wordmark{font-size:58px}}
+@media(prefers-reduced-motion:reduce){.bloom-overlay:before{animation:none}.bloom-opening{animation:reduced-bloom 40ms linear both}.bloom-closing{background:#f4e7d2}.bloom-overlay .curtain-flower{display:none}.bloom-preloader-card,.preloader-emblem>.bloom-mark{animation:none}.bloom-opening .bloom-preloader-card{opacity:0}.petal-step-copy,.petal-step-number>.bloom-mark,.petal-step-number>span{transition:none;opacity:1;transform:none}.petal-seen .petal-step-number .bloom-petal{animation:none}.market-specimen,.program-petal-node,.program-flower{transition:none}.petal-step-line:after{transition:none}.market-focus,.program-focus-content{animation:none}}
+@keyframes reduced-bloom{to{opacity:0}}
