@@ -144,6 +144,10 @@ pub struct MarketShard {
     pub trader_pnl_unsettled: i64,
     /// Shortfall beyond position margin, for the loss waterfall.
     pub bad_debt: u64,
+    /// Σ funding + borrow taken from (positive) or paid to (negative) trader
+    /// ledgers. Funding nets to zero only when OI is balanced; the pool is
+    /// counterparty to the skew and earns all borrow.
+    pub carry_unsettled: i64,
     /// OI added since the last merge (base units, gross).
     pub delta_long_since_merge: u64,
     pub delta_short_since_merge: u64,
@@ -262,6 +266,18 @@ pub struct LiquidationEvent {
     pub bounty: u64,
     pub bad_debt: u64,
     pub sample_hash: [u8; 32],
+}
+
+#[event]
+pub struct ShardSettled {
+    pub market_id: u32,
+    pub shard: u8,
+    pub fees: u64,
+    /// Positive: custody → bucket; negative: bucket → custody.
+    pub to_bucket: i64,
+    pub insurance_covered: u64,
+    /// Bad debt left for the staked tranche / LLP NAV.
+    pub uncovered: u64,
 }
 
 #[event]

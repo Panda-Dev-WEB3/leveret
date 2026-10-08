@@ -58,6 +58,8 @@ pub enum EngineError {
     TooManyPositions,
     #[msg("Invalid parameters")]
     InvalidParams,
+    #[msg("Custody shard can't cover this settlement; use another custody index")]
+    InsufficientCustody,
     #[msg("Not implemented in the skeleton yet")]
     NotImplemented,
 }

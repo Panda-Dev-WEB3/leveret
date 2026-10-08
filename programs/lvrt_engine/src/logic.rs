@@ -146,10 +146,12 @@ pub fn account_health<'info>(margin_key: &Pubkey, margin: &MarginAccount, rem: &
 }
 
 /// Bring a position's accrued funding/borrow into the ledger and reset its
-/// indices (used before size changes).
-pub fn settle_carry(pos: &mut Position, fs: &FundingState, margin: &mut MarginAccount) -> Result<i64> {
+/// indices (used before size changes). The amount is recorded on the shard
+/// so `settle_shard` can move it between custody and the bucket.
+pub fn settle_carry(pos: &mut Position, fs: &FundingState, margin: &mut MarginAccount, shard: &mut MarketShard) -> Result<i64> {
     let (f, b) = carry_owed(pos, fs)?;
     let owed = f + b;
+    shard.carry_unsettled += owed;
     if pos.isolated_margin > 0 {
         let im = pos.isolated_margin as i64 - owed;
         pos.isolated_margin = im.max(0) as u64;
@@ -226,7 +228,7 @@ pub fn reduce(
         require!(pricing::within_user_bound(exit_side, fill.price, b), EngineError::Slippage);
     }
 
-    settle_carry(pos, fs, margin)?;
+    settle_carry(pos, fs, margin, shard)?;
 
     let ss = match pos.side {
         Side::Long => size as i64,

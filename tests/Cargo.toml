@@ -27,3 +27,6 @@ lvrt_gov = { path = "../programs/lvrt_gov", features = ["cpi"] }
 lvrt_oracle = { path = "../programs/lvrt_oracle", features = ["cpi"] }
 lvrt_engine = { path = "../programs/lvrt_engine", features = ["cpi"] }
 lvrt_tickets = { path = "../programs/lvrt_tickets", features = ["cpi"] }
+lvrt_vault = { path = "../programs/lvrt_vault", features = ["cpi"] }
+lvrt_insurance = { path = "../programs/lvrt_insurance", features = ["cpi"] }
+lvrt_fee_router = { path = "../programs/lvrt_fee_router", features = ["cpi"] }

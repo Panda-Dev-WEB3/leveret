@@ -62,7 +62,7 @@ crate also runs natively on Windows: `cargo test -p lvrt_math`.
 `lvrt_math` (46 unit tests) — including the §14 fixture *a power-market
 split keeps every long's value unchanged to 1e-9* (4:1, 1:10, 3:2).
 
-LiteSVM integration (`tests/tests/*.rs`, 16 tests):
+LiteSVM integration (`tests/tests/*.rs`, 21 tests):
 
 | Test | Spec rule |
 |---|---|
@@ -79,6 +79,11 @@ LiteSVM integration (`tests/tests/*.rs`, 16 tests):
 | `withdraw_checks_health_and_is_never_paused` | cross health, exits open |
 | `merge_aggregates_shards_and_accrues_funding` | §3.2 merge, §3.4 velocity funding + borrow, 24h signer-key expiry/rotation |
 | `timelock_executes_only_after_72h` | §12 timelock, guardian cancel |
+| `losing_trader_pays_bucket_carry_and_fees` | settlement: fees → inbox, loss + carry → bucket, custody == Σ ledgers |
+| `winning_trader_is_paid_by_bucket_and_can_withdraw_everything` | settlement: bucket pays winners; profit is withdrawable |
+| `bad_debt_is_covered_by_the_insurance_fund` | §3.5 loss waterfall: insurance makes the bucket whole |
+| `uncovered_bad_debt_falls_on_the_bucket` | waterfall with an empty fund |
+| `settlement_rejects_a_custody_that_cannot_cover_it` | custody shard selection |
 | `late_crossing_report_knocks_the_ticket_out` | §14 fixture |
 | `buy_prices_the_ticket_and_enforces_distance` | §9 price, 3% minimum distance |
 | `evidence_from_before_issue_is_rejected` | §9 knock-out evidence window |
@@ -89,10 +94,10 @@ LiteSVM integration (`tests/tests/*.rs`, 16 tests):
 |---|---|---|
 | gov | init (upgrade-authority gated), queue, cancel, execute via `invoke_signed`, self-admin, replay guard | — |
 | oracle | signer registry (attestation hash, expiry), feeds with depth gate + ≥2 sources, Ed25519 introspection, aggregation per family, calendar override, gap protocol, `at_open`, guardian tighten-only status, receipt roots + Merkle verify | Chainlink verifier CPI, Switchboard Surge verification (both enter via registered pusher keys meanwhile) |
-| engine | everything in the fill path, cross/isolated margin, delegates with budgets, deposit/withdraw (USDC only), circuit-breaker queue, liquidation, TP/SL, shard merge + funding + borrow, split/dividend crank, tighten-only risk setters | `settle_shard` (fees/PnL to vault + fee router, bad debt to insurance), ADL, USDT→USDC Jupiter deposit, trigger re-pricing on splits, limit-open triggers |
+| engine | everything in the fill path, cross/isolated margin, delegates with budgets, deposit/withdraw (USDC only), circuit-breaker queue, liquidation, TP/SL, shard merge + funding + borrow, split/dividend crank, tighten-only risk setters, `settle_shard` (fees → fee router, net PnL + carry ↔ bucket, bad debt → insurance) | ADL, staked-tranche step of the waterfall, USDT→USDC Jupiter deposit, trigger re-pricing on splits, limit-open triggers |
 | vault | buckets, LP mint, NAV deposit/redeem ±5 bps, dead shares, 48h queue, engine-only exposure report + settlement | composite LLP router, hedge-router authority |
 | insurance | funds, targets, contributions, staker rewards accounting, stake + 14-day request, engine-only shortfall cover | slashing at TWAP, unstake payout |
-| fee_router | 80/10/5/5 split from a per-bucket inbox | ledger CPIs into vault/insurance, keeper/oracle-operator shares, buy-and-burn |
+| fee_router | per-bucket fee inbox PDAs, 80/10/5/5 split | ledger CPIs into vault/insurance, keeper/oracle-operator shares, buy-and-burn |
 | power | index, normFactor accrual, daily carry, ShortVault mint/burn at 200%/150%, AMM buy inside band, split | AMM sell, batch liquidations, Crab, `redeem_at_index`, Token-2022 metadata |
 | factor | registry, signed publishes (methodology hash checked), liveness pause, 30-day methodology change, guardian pause | factor perps trade on the engine via an oracle feed signed by the same enclave key |
 | tickets | buy with distance/caps/stress budget, sell-back (session only), knock-out by live or late signed evidence, transfer, gifts | split handling, routing liquidity through `lvrt_vault` |
@@ -114,6 +119,15 @@ part of this pass.
   vault reports bucket utilization on-chain.
 - **Insurance carve-out comes out of the 80% workers' share** (the spec gives
   both "80% to workers" and "20% of bucket fees to insurance").
+- **Settlement.** Trades only move internal balances; `settle_shard`
+  (permissionless) moves real USDC: fees → the bucket's fee inbox, and
+  `−trader PnL + carry − bad debt` between custody and the LLP bucket, then
+  `min(bad debt, insurance fund)` from insurance into the bucket. Carry
+  (funding + borrow) is recorded per shard because funding nets to zero only
+  when OI is balanced — the pool is counterparty to the skew. Bad debt that
+  insurance can't cover currently reduces LLP NAV directly; the staked-tranche
+  slash in between is still TODO. Afterwards custody == Σ collateral + queued
+  profit (asserted in every settlement test).
 - **Tickets keep their own USDC vault** for the TICKETS bucket for now.
 - **Corporate actions** are declared by a `ca_operator` key while the oracle
   holds the market in `CA_PENDING`; positions are rescaled lazily per account.
@@ -123,6 +137,6 @@ part of this pass.
 ## Before any mainnet use
 
 This is a skeleton: unaudited, with known TODOs in the money paths
-(`settle_shard`, slashing, ADL). Two audits, verified builds, the published
+(slashing, ADL, fee-router ledger CPIs). Two audits, verified builds, the published
 signer policy and an end-to-end mainnet timelock rehearsal are launch gates
 in the spec (§14).

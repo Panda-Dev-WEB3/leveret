@@ -155,7 +155,7 @@ pub fn handle_open_position(mut ctx: Context<OpenPosition>, args: OpenArgs) -> R
         require!(a.margin.open_positions < MAX_POSITIONS_PER_ACCOUNT, EngineError::TooManyPositions);
     } else {
         require!((a.position.isolated_margin > 0) == (args.isolated_margin > 0), EngineError::InvalidParams);
-        settle_carry(&mut a.position, fs, &mut a.margin)?;
+        settle_carry(&mut a.position, fs, &mut a.margin, &mut a.shard)?;
     }
     let m = &mut a.margin;
     if args.isolated_margin > 0 {

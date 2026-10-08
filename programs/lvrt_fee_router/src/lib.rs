@@ -61,6 +61,12 @@ pub mod lvrt_fee_router {
         Ok(())
     }
 
+    /// One fee inbox per LLP bucket; engine `settle_shard` pays fees here.
+    pub fn init_inbox(_ctx: Context<InitInbox>, bucket: lvrt_common::Bucket) -> Result<()> {
+        msg!("fee inbox for bucket {}", bucket.id());
+        Ok(())
+    }
+
     /// Permissionless crank: split everything in the bucket's fee inbox.
     pub fn distribute<'info>(ctx: Context<'info, Distribute<'info>>) -> Result<()> {
         let a = &ctx.accounts;
@@ -143,6 +149,27 @@ pub struct Initialize<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(bucket: lvrt_common::Bucket)]
+pub struct InitInbox<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(seeds = [seeds::CONFIG], bump = config.bump)]
+    pub config: Box<Account<'info, RouterConfig>>,
+    /// CHECK: router signer PDA.
+    #[account(seeds = [seeds::ROUTER], bump = config.signer_bump)]
+    pub router_signer: UncheckedAccount<'info>,
+    #[account(address = USDC_MINT)]
+    pub usdc_mint: Box<InterfaceAccount<'info, Mint>>,
+    #[account(
+        init, payer = payer, seeds = [seeds::FEE_INBOX, &[bucket.id()]], bump,
+        token::mint = usdc_mint, token::authority = router_signer, token::token_program = token_program,
+    )]
+    pub inbox: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub token_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
 pub struct Distribute<'info> {
     #[account(seeds = [seeds::CONFIG], bump = config.bump)]
     pub config: Box<Account<'info, RouterConfig>>,
@@ -151,8 +178,8 @@ pub struct Distribute<'info> {
     pub router_signer: UncheckedAccount<'info>,
     #[account(address = USDC_MINT)]
     pub usdc_mint: Box<InterfaceAccount<'info, Mint>>,
-    /// Per-bucket fee inbox (engine settlement pays fees here).
-    #[account(mut, token::mint = usdc_mint, token::authority = router_signer)]
+    /// The fee inbox of exactly this bucket.
+    #[account(mut, seeds = [seeds::FEE_INBOX, &[bucket_state.bucket.id()]], bump)]
     pub inbox: Box<InterfaceAccount<'info, TokenAccount>>,
     pub bucket_state: Box<Account<'info, BucketState>>,
     pub fund: Box<Account<'info, Fund>>,

@@ -1875,7 +1875,10 @@ dependencies = [
  "anchor-lang",
  "anchor-spl",
  "lvrt_common",
+ "lvrt_fee_router",
+ "lvrt_insurance",
  "lvrt_oracle",
+ "lvrt_vault",
 ]
 
 [[package]]
@@ -1944,10 +1947,13 @@ dependencies = [
  "litesvm",
  "lvrt_common",
  "lvrt_engine",
+ "lvrt_fee_router",
  "lvrt_gov",
+ "lvrt_insurance",
  "lvrt_math",
  "lvrt_oracle",
  "lvrt_tickets",
+ "lvrt_vault",
  "solana-account",
  "solana-clock 3.2.1",
  "solana-keypair",

@@ -18,11 +18,14 @@ use solana_transaction::versioned::VersionedTransaction;
 
 pub use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
 
+pub mod fixture;
 pub mod engine;
 pub mod gov;
+pub mod pool;
 
 pub const BPF_UPGRADEABLE: Pubkey = lvrt_common::BPF_LOADER_UPGRADEABLE;
 pub const SPL_TOKEN: Pubkey = anchor_lang::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+pub const TOKEN_2022: Pubkey = anchor_lang::pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 pub const SYSTEM: Pubkey = anchor_lang::solana_program::system_program::ID;
 pub const IX_SYSVAR: Pubkey = anchor_lang::pubkey!("Sysvar1nstructions1111111111111111111111111");
 /// Thursday 2025-10-09 08:53:20 UTC — a weekday, so equities aren't calendar-closed.
@@ -63,6 +66,9 @@ impl Env {
             (lvrt_oracle::ID, "lvrt_oracle"),
             (lvrt_engine::ID, "lvrt_engine"),
             (lvrt_tickets::ID, "lvrt_tickets"),
+            (lvrt_vault::ID, "lvrt_vault"),
+            (lvrt_insurance::ID, "lvrt_insurance"),
+            (lvrt_fee_router::ID, "lvrt_fee_router"),
         ] {
             env.svm.add_program(id, &so(name)).unwrap();
             env.set_upgrade_authority(&id);
@@ -97,6 +103,43 @@ impl Env {
     pub fn advance(&mut self, secs: i64) {
         let t = self.now() + secs;
         self.set_time(t);
+    }
+
+    /// A classic SPL mint at a fresh address (e.g. a stand-in $LVRT).
+    pub fn create_mint(&mut self, decimals: u8) -> Pubkey {
+        let addr = Keypair::new().pubkey();
+        let mint = spl_token_interface::state::Mint {
+            mint_authority: COption::Some(self.usdc_authority.pubkey()),
+            supply: 0,
+            decimals,
+            is_initialized: true,
+            freeze_authority: COption::None,
+        };
+        let mut data = vec![0u8; spl_token_interface::state::Mint::LEN];
+        mint.pack_into_slice(&mut data);
+        let lamports = self.svm.minimum_balance_for_rent_exemption(data.len());
+        self.svm.set_account(addr, Account { lamports, data, owner: SPL_TOKEN, executable: false, rent_epoch: 0 }).unwrap();
+        addr
+    }
+
+    /// An empty token account for `mint` under `token_program` (SPL or Token-2022).
+    pub fn token_account(&mut self, mint: &Pubkey, owner: &Pubkey, token_program: &Pubkey) -> Pubkey {
+        let addr = Keypair::new().pubkey();
+        let acc = spl_token_interface::state::Account {
+            mint: *mint,
+            owner: *owner,
+            amount: 0,
+            delegate: COption::None,
+            state: spl_token_interface::state::AccountState::Initialized,
+            is_native: COption::None,
+            delegated_amount: 0,
+            close_authority: COption::None,
+        };
+        let mut data = vec![0u8; spl_token_interface::state::Account::LEN];
+        acc.pack_into_slice(&mut data);
+        let lamports = self.svm.minimum_balance_for_rent_exemption(data.len());
+        self.svm.set_account(addr, Account { lamports, data, owner: *token_program, executable: false, rent_epoch: 0 }).unwrap();
+        addr
     }
 
     fn create_usdc_mint(&mut self) {

@@ -51,6 +51,8 @@ pub mod seeds {
     pub const TWIN_MINT: &[u8] = b"twin_mint";
     pub const RECEIPT: &[u8] = b"receipt";
     pub const ROUTER: &[u8] = b"router";
+    /// Per-bucket fee inbox owned by the fee router: `[FEE_INBOX, &[bucket]]`.
+    pub const FEE_INBOX: &[u8] = b"fee_inbox";
 }
 
 /// 72h timelock for every loosening action.

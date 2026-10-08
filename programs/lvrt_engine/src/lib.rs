@@ -130,7 +130,8 @@ pub mod lvrt_engine {
         instructions::crank::handle_apply_corporate_action(ctx)
     }
 
-    pub fn settle_shard(ctx: Context<SettleShard>) -> Result<()> {
-        instructions::crank::handle_settle_shard(ctx)
+    /// Move fees, net trader PnL, carry and insurance cover for one shard.
+    pub fn settle_shard<'info>(ctx: Context<'info, SettleShard<'info>>, custody_index: u8) -> Result<()> {
+        instructions::crank::handle_settle_shard(ctx, custody_index)
     }
 }
