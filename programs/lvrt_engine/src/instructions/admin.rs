@@ -5,7 +5,7 @@ use lvrt_oracle::PriceState;
 
 use crate::{
     error::EngineError,
-    state::{CaKind, CorporateAction, EngineConfig, FundingConfig, FundingState, Market, RiskParams, MAX_CUSTODY},
+    state::{BucketRisk, CaKind, CorporateAction, EngineConfig, FundingConfig, FundingState, Market, RiskParams, MAX_CUSTODY},
 };
 
 // ---------------------------------------------------------------- initialize
@@ -39,6 +39,9 @@ pub fn handle_initialize(ctx: Context<Initialize>, authority: Pubkey, guardian: 
     c.usdc_mint = ctx.accounts.usdc_mint.key();
     c.custody_count = custody_count;
     c.opens_paused = false;
+    c.adl_operator = Pubkey::default();
+    c.adl_trigger_bps = lvrt_common::lvrt_math::adl::DEFAULT_TRIGGER_BPS;
+    c.adl_target_bps = lvrt_common::lvrt_math::adl::DEFAULT_TARGET_BPS;
     c.signer_bump = ctx.bumps.engine_signer;
     c.bump = ctx.bumps.config;
     Ok(())
@@ -117,6 +120,14 @@ pub struct CreateMarket<'info> {
         seeds::program = lvrt_oracle::ID,
     )]
     pub price_state: Account<'info, PriceState>,
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = 8 + BucketRisk::INIT_SPACE,
+        seeds = [seeds::BUCKET_RISK, &[params.bucket.id()]],
+        bump
+    )]
+    pub bucket_risk: Account<'info, BucketRisk>,
     pub system_program: Program<'info, System>,
 }
 
@@ -143,6 +154,12 @@ pub fn handle_create_market(ctx: Context<CreateMarket>, p: MarketParams) -> Resu
     f.market_id = p.market_id;
     f.last_update = now;
     f.bump = ctx.bumps.funding_state;
+    let br = &mut ctx.accounts.bucket_risk;
+    if br.market_count == 0 {
+        br.bucket = p.bucket;
+        br.bump = ctx.bumps.bucket_risk;
+    }
+    br.market_count += 1;
     Ok(())
 }
 
@@ -222,6 +239,18 @@ pub fn handle_set_opens_paused(ctx: Context<SetConfig>, paused: bool) -> Result<
         require!(paused, EngineError::GuardianCannotLoosen);
     }
     c.opens_paused = paused;
+    Ok(())
+}
+
+/// Timelock only. `trigger` must exceed `target`, and both stay below 100%
+/// so ADL acts before the bucket can no longer pay winners.
+pub fn handle_set_adl_params(ctx: Context<SetConfig>, operator: Pubkey, trigger_bps: u16, target_bps: u16) -> Result<()> {
+    let c = &mut ctx.accounts.config;
+    require_keys_eq!(ctx.accounts.signer.key(), c.authority, EngineError::NotAuthority);
+    require!(target_bps > 0 && target_bps < trigger_bps && trigger_bps < 10_000, EngineError::InvalidParams);
+    c.adl_operator = operator;
+    c.adl_trigger_bps = trigger_bps;
+    c.adl_target_bps = target_bps;
     Ok(())
 }
 

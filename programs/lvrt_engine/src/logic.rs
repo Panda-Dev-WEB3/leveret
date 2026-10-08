@@ -178,6 +178,8 @@ pub enum ReduceKind {
     User,
     Trigger,
     Liquidation,
+    /// Protocol-initiated close at the exact mark: no spread, fee or haircut.
+    Adl,
 }
 
 pub struct ReduceOutcome {
@@ -212,18 +214,22 @@ pub fn reduce(
         Side::Long => MSide::Short,
         Side::Short => MSide::Long,
     };
-    let fill = pricing::fill_price(
-        exit_side,
-        size as i64,
-        q.mid,
-        q.bid,
-        q.ask,
-        ps.band_bps,
-        fs.skew(),
-        &spread_params(market, ps.session),
-        q.extra_bps,
-    )
-    .m()?;
+    let fill = if kind == ReduceKind::Adl {
+        Fill { price: q.mid, spread_bps: 0, spread_paid: 0 }
+    } else {
+        pricing::fill_price(
+            exit_side,
+            size as i64,
+            q.mid,
+            q.bid,
+            q.ask,
+            ps.band_bps,
+            fs.skew(),
+            &spread_params(market, ps.session),
+            q.extra_bps,
+        )
+        .m()?
+    };
     if let Some(b) = bound {
         require!(pricing::within_user_bound(exit_side, fill.price, b), EngineError::Slippage);
     }
@@ -237,7 +243,8 @@ pub fn reduce(
     let pnl = mm::unrealized_pnl(ss, pos.entry_px, fill.price).m()?;
     let held = clock.unix_timestamp - pos.opened_at;
     let spread_share = (pos.spread_paid as i128 * size as i128 / pos.size as i128) as i64;
-    let realized = if kind == ReduceKind::Liquidation {
+    let protocol = matches!(kind, ReduceKind::Liquidation | ReduceKind::Adl);
+    let realized = if protocol {
         pnl
     } else {
         mm::anti_stale_realized(pnl, spread_share + fill.spread_paid, held)
@@ -260,7 +267,7 @@ pub fn reduce(
     }
 
     let n_abs = notional(size as i64, fill.price).m()?.abs();
-    let fee = if kind == ReduceKind::Liquidation { 0 } else { fee_for(market, margin, n_abs)? };
+    let fee = if protocol { 0 } else { fee_for(market, margin, n_abs)? };
 
     let portion = |v: u64| -> u64 { (v as u128 * size as u128 / pos.size as u128) as u64 };
     let entry_portion = portion(pos.entry_notional);
@@ -300,6 +307,15 @@ pub fn reduce(
         margin.open_positions = margin.open_positions.saturating_sub(1);
     }
     Ok(ReduceOutcome { fill, size, realized, fee, closed_all })
+}
+
+/// Margin backing a position: its isolated margin, else the IM it reserved.
+pub fn position_margin(pos: &Position) -> u64 {
+    if pos.isolated_margin > 0 {
+        pos.isolated_margin
+    } else {
+        pos.im_reserved
+    }
 }
 
 pub fn usdc_notional(size: u64, px: i64) -> Result<u64> {

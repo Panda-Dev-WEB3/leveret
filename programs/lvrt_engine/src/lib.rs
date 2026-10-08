@@ -50,6 +50,10 @@ pub mod lvrt_engine {
         instructions::admin::handle_set_opens_paused(ctx, paused)
     }
 
+    pub fn set_adl_params(ctx: Context<SetConfig>, operator: Pubkey, trigger_bps: u16, target_bps: u16) -> Result<()> {
+        instructions::admin::handle_set_adl_params(ctx, operator, trigger_bps, target_bps)
+    }
+
     pub fn set_roles(ctx: Context<SetConfig>, guardian: Pubkey, ca_operator: Pubkey) -> Result<()> {
         instructions::admin::handle_set_roles(ctx, guardian, ca_operator)
     }
@@ -116,8 +120,9 @@ pub mod lvrt_engine {
         instructions::liquidate::handle_liquidate(ctx)
     }
 
-    pub fn auto_deleverage(ctx: Context<Liquidate>) -> Result<()> {
-        instructions::liquidate::handle_auto_deleverage(ctx)
+    /// ADL operator only; see `instructions::adl` for the on-chain checks.
+    pub fn auto_deleverage<'info>(ctx: Context<'info, AutoDeleverage<'info>>) -> Result<()> {
+        instructions::adl::handle_auto_deleverage(ctx)
     }
 
     // ---- cranks

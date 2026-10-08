@@ -242,6 +242,7 @@ pub fn settle_ix(pool: &Pool, market_id: u32, shard_index: u8, custody_index: u8
             engine_signer: crate::engine::signer(),
             market: crate::engine::market(market_id),
             shard: crate::engine::shard(market_id, shard_index),
+            funding_state: crate::engine::funding(market_id),
             usdc_mint: USDC_MINT,
             custody: crate::engine::custody(custody_index),
             fee_inbox: router::inbox(pool.bucket),

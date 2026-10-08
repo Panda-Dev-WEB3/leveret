@@ -59,10 +59,10 @@ crate also runs natively on Windows: `cargo test -p lvrt_math`.
 
 ## What the tests cover
 
-`lvrt_math` (46 unit tests) — including the §14 fixture *a power-market
+`lvrt_math` (50 unit tests) — including the §14 fixture *a power-market
 split keeps every long's value unchanged to 1e-9* (4:1, 1:10, 3:2).
 
-LiteSVM integration (`tests/tests/*.rs`, 21 tests):
+LiteSVM integration (`tests/tests/*.rs`, 25 tests):
 
 | Test | Spec rule |
 |---|---|
@@ -84,6 +84,10 @@ LiteSVM integration (`tests/tests/*.rs`, 21 tests):
 | `bad_debt_is_covered_by_the_insurance_fund` | §3.5 loss waterfall: insurance makes the bucket whole |
 | `uncovered_bad_debt_falls_on_the_bucket` | waterfall with an empty fund |
 | `settlement_rejects_a_custody_that_cannot_cover_it` | custody shard selection |
+| `adl_is_refused_while_the_bucket_is_healthy` | §3.5 ADL only past the trigger |
+| `adl_closes_top_rank_first_and_stops_at_target` | ADL at the mark, partial close to target, bucket still pays winners |
+| `ranks_within_a_round_must_not_increase` | ADL ordering |
+| `adl_guards` | operator only, all bucket markets, winners only, fresh merges |
 | `late_crossing_report_knocks_the_ticket_out` | §14 fixture |
 | `buy_prices_the_ticket_and_enforces_distance` | §9 price, 3% minimum distance |
 | `evidence_from_before_issue_is_rejected` | §9 knock-out evidence window |
@@ -94,7 +98,7 @@ LiteSVM integration (`tests/tests/*.rs`, 21 tests):
 |---|---|---|
 | gov | init (upgrade-authority gated), queue, cancel, execute via `invoke_signed`, self-admin, replay guard | — |
 | oracle | signer registry (attestation hash, expiry), feeds with depth gate + ≥2 sources, Ed25519 introspection, aggregation per family, calendar override, gap protocol, `at_open`, guardian tighten-only status, receipt roots + Merkle verify | Chainlink verifier CPI, Switchboard Surge verification (both enter via registered pusher keys meanwhile) |
-| engine | everything in the fill path, cross/isolated margin, delegates with budgets, deposit/withdraw (USDC only), circuit-breaker queue, liquidation, TP/SL, shard merge + funding + borrow, split/dividend crank, tighten-only risk setters, `settle_shard` (fees → fee router, net PnL + carry ↔ bucket, bad debt → insurance) | ADL, staked-tranche step of the waterfall, USDT→USDC Jupiter deposit, trigger re-pricing on splits, limit-open triggers |
+| engine | everything in the fill path, cross/isolated margin, delegates with budgets, deposit/withdraw (USDC only), circuit-breaker queue, liquidation, TP/SL, shard merge + funding + borrow, split/dividend crank, tighten-only risk setters, `settle_shard` (fees → fee router, net PnL + carry ↔ bucket, bad debt → insurance), ADL | staked-tranche step of the waterfall, USDT→USDC Jupiter deposit, trigger re-pricing on splits, limit-open triggers |
 | vault | buckets, LP mint, NAV deposit/redeem ±5 bps, dead shares, 48h queue, engine-only exposure report + settlement | composite LLP router, hedge-router authority |
 | insurance | funds, targets, contributions, staker rewards accounting, stake + 14-day request, engine-only shortfall cover | slashing at TWAP, unstake payout |
 | fee_router | per-bucket fee inbox PDAs, 80/10/5/5 split | ledger CPIs into vault/insurance, keeper/oracle-operator shares, buy-and-burn |
@@ -128,6 +132,17 @@ part of this pass.
   insurance can't cover currently reduces LLP NAV directly; the staked-tranche
   slash in between is still TODO. Afterwards custody == Σ collateral + queued
   profit (asserted in every settlement test).
+- **ADL** (GMX-v2-style, adapted to the spec's ranking). It may run only
+  while the bucket's trader uPnL is ≥ 95% of its capital (bucket USDC +
+  unsettled flows + insurance fund), computed on-chain over every market of
+  the bucket (`BucketRisk.market_count`; merges ≤ 25 slots old). Each call
+  closes just enough of one winner, at the exact mark with no fee, to return
+  to 90% — so the bucket stays able to pay. Rank = `pnl% × leverage`, which
+  reduces to PnL / position margin. A permissioned ADL operator picks the
+  targets; the chain enforces non-increasing rank within a round and logs
+  rank, ratios and reason. Full on-chain ranking would need enumerating all
+  positions and isn't attempted. A bucket can list ~17 markets before ADL
+  needs v0 transactions with lookup tables.
 - **Tickets keep their own USDC vault** for the TICKETS bucket for now.
 - **Corporate actions** are declared by a `ca_operator` key while the oracle
   holds the market in `CA_PENDING`; positions are rescaled lazily per account.
@@ -137,6 +152,6 @@ part of this pass.
 ## Before any mainnet use
 
 This is a skeleton: unaudited, with known TODOs in the money paths
-(slashing, ADL, fee-router ledger CPIs). Two audits, verified builds, the published
+(slashing, fee-router ledger CPIs). Two audits, verified builds, the published
 signer policy and an end-to-end mainnet timelock rehearsal are launch gates
 in the spec (§14).

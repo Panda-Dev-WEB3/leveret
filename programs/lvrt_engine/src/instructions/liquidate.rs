@@ -101,12 +101,3 @@ pub fn handle_liquidate<'info>(mut ctx: Context<'info, Liquidate<'info>>) -> Res
     }
     Ok(())
 }
-
-/// TODO(engine): ADL — when the bucket's loss waterfall (position margin →
-/// insurance → staked tranche → LLP NAV) is exhausted, close the most
-/// profitable opposing positions ranked by `unrealized_pnl% × leverage` at the
-/// mark, logging the reason. Ranking is computed off-chain and proven against
-/// shard totals on-chain.
-pub fn handle_auto_deleverage(_ctx: Context<Liquidate>) -> Result<()> {
-    err!(EngineError::NotImplemented)
-}

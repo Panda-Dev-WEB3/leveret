@@ -40,6 +40,7 @@ pub fn handle_merge_shards<'info>(ctx: Context<'info, MergeShards<'info>>) -> Re
     require!(rem.len() == market.shards as usize, EngineError::InvalidParams);
 
     let (mut ol, mut os, mut nl, mut ns) = (0u64, 0u64, 0u64, 0u64);
+    let mut unsettled: i128 = 0;
     let mut seen = 0u64;
     for ai in rem.iter() {
         let mut s: Account<MarketShard> = Account::try_from(ai)?;
@@ -52,6 +53,9 @@ pub fn handle_merge_shards<'info>(ctx: Context<'info, MergeShards<'info>>) -> Re
         ns += s.short_entry_notional;
         s.delta_long_since_merge = 0;
         s.delta_short_since_merge = 0;
+        let c = -(s.trader_pnl_unsettled as i128) + s.carry_unsettled as i128 - s.bad_debt as i128;
+        s.merged_to_bucket = i64::try_from(c).map_err(|_| EngineError::InvalidParams)?;
+        unsettled += c;
         s.exit(&crate::ID)?;
     }
 
@@ -82,6 +86,7 @@ pub fn handle_merge_shards<'info>(ctx: Context<'info, MergeShards<'info>>) -> Re
     fs.oi_short = os;
     fs.long_entry_notional = nl;
     fs.short_entry_notional = ns;
+    fs.unsettled_to_bucket = i64::try_from(unsettled).map_err(|_| EngineError::InvalidParams)?;
     fs.last_merge_slot = clock.slot;
     emit!(FundingMerged { market_id: market.market_id, rate: fs.rate, index: fs.index, oi_long: ol, oi_short: os, slot: clock.slot });
     Ok(())
@@ -159,6 +164,8 @@ pub struct SettleShard<'info> {
         bump = shard.bump
     )]
     pub shard: Box<Account<'info, MarketShard>>,
+    #[account(mut, seeds = [seeds::FUNDING, &market.market_id.to_le_bytes()], bump = funding_state.bump)]
+    pub funding_state: Box<Account<'info, FundingState>>,
     #[account(address = config.usdc_mint @ EngineError::NotUsdc)]
     pub usdc_mint: Box<InterfaceAccount<'info, Mint>>,
     /// Any custody shard; the cranker picks one that can cover the outflow.
@@ -293,7 +300,11 @@ pub fn handle_settle_shard<'info>(ctx: Context<'info, SettleShard<'info>>, _cust
     }
 
     let market_id = a.market.market_id;
+    // drop exactly what the last merge counted for this shard
+    let merged = ctx.accounts.shard.merged_to_bucket;
+    ctx.accounts.funding_state.unsettled_to_bucket -= merged;
     let s = &mut ctx.accounts.shard;
+    s.merged_to_bucket = 0;
     s.fees_accrued = 0;
     s.trader_pnl_unsettled = 0;
     s.carry_unsettled = 0;

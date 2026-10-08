@@ -15,6 +15,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod adl;
 pub mod corporate;
 pub mod factor;
 pub mod fees;

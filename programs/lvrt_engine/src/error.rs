@@ -60,6 +60,18 @@ pub enum EngineError {
     InvalidParams,
     #[msg("Custody shard can't cover this settlement; use another custody index")]
     InsufficientCustody,
+    #[msg("Signer is not the ADL operator")]
+    NotAdlOperator,
+    #[msg("ADL needs (Market, FundingState, PriceState) for every market of the bucket")]
+    AdlAccounts,
+    #[msg("A market's merge is too old for ADL")]
+    StaleMerge,
+    #[msg("Bucket PnL ratio is below the ADL trigger")]
+    AdlNotTriggered,
+    #[msg("ADL can only close a profitable position")]
+    AdlNotProfitable,
+    #[msg("ADL ranks within a round must not increase")]
+    AdlRankOrder,
     #[msg("Not implemented in the skeleton yet")]
     NotImplemented,
 }

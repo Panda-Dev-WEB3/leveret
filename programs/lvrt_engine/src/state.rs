@@ -18,7 +18,29 @@ pub struct EngineConfig {
     pub custody_count: u8,
     /// Pause blocks entries only (design rule 3).
     pub opens_paused: bool,
+    /// May run ADL (default unset = disabled). Selection is checked on-chain
+    /// for ordering and logged; see `auto_deleverage`.
+    pub adl_operator: Pubkey,
+    /// ADL may start when trader uPnL ≥ this share of bucket capital…
+    pub adl_trigger_bps: u16,
+    /// …and each step closes just enough to come back to this share.
+    pub adl_target_bps: u16,
     pub signer_bump: u8,
+    pub bump: u8,
+}
+
+/// Engine-side state per LLP bucket.
+#[account]
+#[derive(InitSpace)]
+pub struct BucketRisk {
+    pub bucket: Bucket,
+    /// Markets counterparty to this bucket; ADL must see all of them.
+    pub market_count: u16,
+    pub adl_active: bool,
+    pub adl_round: u32,
+    /// Ranks within a round must be non-increasing.
+    pub adl_last_rank: i128,
+    pub adl_last_ts: i64,
     pub bump: u8,
 }
 
@@ -118,6 +140,9 @@ pub struct FundingState {
     pub oi_short: u64,
     pub long_entry_notional: u64,
     pub short_entry_notional: u64,
+    /// Σ over shards of `−trader_pnl + carry − bad_debt` not yet settled
+    /// (positive = owed to the bucket). Written by merge, reduced by settle.
+    pub unsettled_to_bucket: i64,
     pub last_merge_slot: u64,
     pub bump: u8,
 }
@@ -148,6 +173,9 @@ pub struct MarketShard {
     /// ledgers. Funding nets to zero only when OI is balanced; the pool is
     /// counterparty to the skew and earns all borrow.
     pub carry_unsettled: i64,
+    /// This shard's `−pnl + carry − bad_debt` as counted in
+    /// `FundingState.unsettled_to_bucket` at the last merge.
+    pub merged_to_bucket: i64,
     /// OI added since the last merge (base units, gross).
     pub delta_long_since_merge: u64,
     pub delta_short_since_merge: u64,
@@ -266,6 +294,27 @@ pub struct LiquidationEvent {
     pub bounty: u64,
     pub bad_debt: u64,
     pub sample_hash: [u8; 32],
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AdlReason {
+    /// Trader uPnL reached `adl_trigger_bps` of bucket capital.
+    BucketPnlRatio,
+}
+
+#[event]
+pub struct AdlEvent {
+    pub market_id: u32,
+    pub margin: Pubkey,
+    pub side: Side,
+    pub size: u64,
+    pub price: i64,
+    pub realized_pnl: i64,
+    pub rank: i128,
+    pub round: u32,
+    pub ratio_before_bps: i64,
+    pub ratio_after_bps: i64,
+    pub reason: AdlReason,
 }
 
 #[event]

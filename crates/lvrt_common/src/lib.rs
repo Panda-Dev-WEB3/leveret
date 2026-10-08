@@ -36,6 +36,8 @@ pub mod seeds {
     pub const AUTHORITY: &[u8] = b"authority";
     pub const QUEUE: &[u8] = b"queue";
     pub const BUCKET: &[u8] = b"bucket";
+    /// Engine-side per-bucket risk state (market count, ADL round).
+    pub const BUCKET_RISK: &[u8] = b"brisk";
     pub const LP_MINT: &[u8] = b"lp_mint";
     pub const WITHDRAWAL: &[u8] = b"withdrawal";
     pub const INSURANCE: &[u8] = b"insurance";

@@ -26,6 +26,9 @@ pub fn margin(owner: &Pubkey, sub: u8) -> Pubkey {
 pub fn position(margin: &Pubkey, id: u32, side: Side) -> Pubkey {
     pda(&[seeds::POSITION, margin.as_ref(), &id.to_le_bytes(), &[side.seed()]], &lvrt_engine::ID)
 }
+pub fn bucket_risk(b: Bucket) -> Pubkey {
+    pda(&[seeds::BUCKET_RISK, &[b.id()]], &lvrt_engine::ID)
+}
 pub fn shard_of(margin: &Pubkey, shards: u8) -> u8 {
     lvrt_math::shard::shard_for(&margin.to_bytes(), shards)
 }
@@ -118,6 +121,7 @@ pub fn create_market(env: &mut Env, id: u32, family: Family, bucket: Bucket, fre
             market: market(id),
             funding_state: funding(id),
             price_state: crate::oracle::price(id),
+            bucket_risk: bucket_risk(bucket),
             system_program: SYSTEM,
         },
         vec![],
@@ -266,4 +270,45 @@ pub fn health_metas(m: &Pubkey, positions: &[(u32, Side)]) -> Vec<AccountMeta> {
 
 pub fn set_paused_ix(signer: &Pubkey, paused: bool) -> Instruction {
     ix(lvrt_engine::ID, ins::SetOpensPaused { paused }, acc::SetConfig { signer: *signer, config: config() }, vec![])
+}
+
+pub fn set_adl_params_ix(signer: &Pubkey, operator: &Pubkey, trigger_bps: u16, target_bps: u16) -> Instruction {
+    ix(
+        lvrt_engine::ID,
+        ins::SetAdlParams { operator: *operator, trigger_bps, target_bps },
+        acc::SetConfig { signer: *signer, config: config() },
+        vec![],
+    )
+}
+
+/// ADL `m`'s position on `id`; `bucket_markets` = every market of the bucket.
+pub fn adl_ix(operator: &Pubkey, owner: &Pubkey, m: &Pubkey, id: u32, side: Side, bucket: Bucket, bucket_markets: &[u32]) -> Instruction {
+    ix(
+        lvrt_engine::ID,
+        ins::AutoDeleverage {},
+        acc::AutoDeleverage {
+            adl_operator: *operator,
+            config: config(),
+            bucket_risk: bucket_risk(bucket),
+            bucket_state: crate::pool::vault::bucket(bucket),
+            fund: crate::pool::insurance::fund(bucket),
+            market: market(id),
+            funding_state: funding(id),
+            price_state: crate::oracle::price(id),
+            shard: shard(id, shard_of(m, SHARDS)),
+            position: position(m, id, side),
+            margin: *m,
+            owner: *owner,
+        },
+        bucket_markets
+            .iter()
+            .flat_map(|mid| {
+                vec![
+                    AccountMeta::new_readonly(market(*mid), false),
+                    AccountMeta::new_readonly(funding(*mid), false),
+                    AccountMeta::new_readonly(crate::oracle::price(*mid), false),
+                ]
+            })
+            .collect(),
+    )
 }
