@@ -124,11 +124,16 @@ impl Env {
 
     /// An empty token account for `mint` under `token_program` (SPL or Token-2022).
     pub fn token_account(&mut self, mint: &Pubkey, owner: &Pubkey, token_program: &Pubkey) -> Pubkey {
+        self.token_account_with(mint, owner, token_program, 0)
+    }
+
+    /// A token account for `mint` holding `amount`.
+    pub fn token_account_with(&mut self, mint: &Pubkey, owner: &Pubkey, token_program: &Pubkey, amount: u64) -> Pubkey {
         let addr = Keypair::new().pubkey();
         let acc = spl_token_interface::state::Account {
             mint: *mint,
             owner: *owner,
-            amount: 0,
+            amount,
             delegate: COption::None,
             state: spl_token_interface::state::AccountState::Initialized,
             is_native: COption::None,

@@ -325,7 +325,9 @@ pub struct ShardSettled {
     /// Positive: custody → bucket; negative: bucket → custody.
     pub to_bucket: i64,
     pub insurance_covered: u64,
-    /// Bad debt left for the staked tranche / LLP NAV.
+    /// Covered by slashing the staked $LVRT tranche (bucket receivable).
+    pub tranche_covered: u64,
+    /// Bad debt left for LLP NAV.
     pub uncovered: u64,
 }
 

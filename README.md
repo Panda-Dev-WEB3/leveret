@@ -59,10 +59,10 @@ crate also runs natively on Windows: `cargo test -p lvrt_math`.
 
 ## What the tests cover
 
-`lvrt_math` (50 unit tests) — including the §14 fixture *a power-market
+`lvrt_math` (54 unit tests) — including the §14 fixture *a power-market
 split keeps every long's value unchanged to 1e-9* (4:1, 1:10, 3:2).
 
-LiteSVM integration (`tests/tests/*.rs`, 25 tests):
+LiteSVM integration (`tests/tests/*.rs`, 30 tests):
 
 | Test | Spec rule |
 |---|---|
@@ -88,6 +88,11 @@ LiteSVM integration (`tests/tests/*.rs`, 25 tests):
 | `adl_closes_top_rank_first_and_stops_at_target` | ADL at the mark, partial close to target, bucket still pays winners |
 | `ranks_within_a_round_must_not_increase` | ADL ordering |
 | `adl_guards` | operator only, all bucket markets, winners only, fresh merges |
+| `bad_debt_slashes_the_tranche_pro_rata_before_nav` | §5 tranche: pro-rata slash at TWAP, NAV kept whole via receivable |
+| `escrowed_lvrt_sells_into_the_bucket` | slashed $LVRT sold at the recovery price, receivable settled |
+| `slashing_needs_a_fresh_twap` | TWAP freshness, refresh + settle in one tx |
+| `a_tranche_smaller_than_the_loss_is_wiped_and_the_rest_hits_nav` | full wipe, share epoch reset, remainder to NAV |
+| `unstake_after_cooldown_pays_the_post_slash_amount_and_rewards_are_claimable` | 14-day cooldown still slashable, rewards per share |
 | `late_crossing_report_knocks_the_ticket_out` | §14 fixture |
 | `buy_prices_the_ticket_and_enforces_distance` | §9 price, 3% minimum distance |
 | `evidence_from_before_issue_is_rejected` | §9 knock-out evidence window |
@@ -98,9 +103,9 @@ LiteSVM integration (`tests/tests/*.rs`, 25 tests):
 |---|---|---|
 | gov | init (upgrade-authority gated), queue, cancel, execute via `invoke_signed`, self-admin, replay guard | — |
 | oracle | signer registry (attestation hash, expiry), feeds with depth gate + ≥2 sources, Ed25519 introspection, aggregation per family, calendar override, gap protocol, `at_open`, guardian tighten-only status, receipt roots + Merkle verify | Chainlink verifier CPI, Switchboard Surge verification (both enter via registered pusher keys meanwhile) |
-| engine | everything in the fill path, cross/isolated margin, delegates with budgets, deposit/withdraw (USDC only), circuit-breaker queue, liquidation, TP/SL, shard merge + funding + borrow, split/dividend crank, tighten-only risk setters, `settle_shard` (fees → fee router, net PnL + carry ↔ bucket, bad debt → insurance), ADL | staked-tranche step of the waterfall, USDT→USDC Jupiter deposit, trigger re-pricing on splits, limit-open triggers |
-| vault | buckets, LP mint, NAV deposit/redeem ±5 bps, dead shares, 48h queue, engine-only exposure report + settlement | composite LLP router, hedge-router authority |
-| insurance | funds, targets, contributions, staker rewards accounting, stake + 14-day request, engine-only shortfall cover | slashing at TWAP, unstake payout |
+| engine | everything in the fill path, cross/isolated margin, delegates with budgets, deposit/withdraw (USDC only), circuit-breaker queue, liquidation, TP/SL, shard merge + funding + borrow, split/dividend crank, tighten-only risk setters, `settle_shard` (fees → fee router, net PnL + carry ↔ bucket, bad debt → insurance → staked tranche), ADL | USDT→USDC Jupiter deposit, trigger re-pricing on splits, limit-open triggers |
+| vault | buckets, LP mint, NAV deposit/redeem ±5 bps, dead shares, 48h queue, engine-only exposure report + settlement, slash receivable in NAV, insurance-only recovery collection | composite LLP router, hedge-router authority |
+| insurance | funds, targets, contributions, engine-only shortfall cover, share-based staked tranche, TWAP crank, pro-rata slashing into escrow, recovery sales, 14-day unstake, reward claims | — |
 | fee_router | per-bucket fee inbox PDAs, 80/10/5/5 split | ledger CPIs into vault/insurance, keeper/oracle-operator shares, buy-and-burn |
 | power | index, normFactor accrual, daily carry, ShortVault mint/burn at 200%/150%, AMM buy inside band, split | AMM sell, batch liquidations, Crab, `redeem_at_index`, Token-2022 metadata |
 | factor | registry, signed publishes (methodology hash checked), liveness pause, 30-day methodology change, guardian pause | factor perps trade on the engine via an oracle feed signed by the same enclave key |
@@ -126,12 +131,25 @@ part of this pass.
 - **Settlement.** Trades only move internal balances; `settle_shard`
   (permissionless) moves real USDC: fees → the bucket's fee inbox, and
   `−trader PnL + carry − bad debt` between custody and the LLP bucket, then
-  `min(bad debt, insurance fund)` from insurance into the bucket. Carry
+  `min(bad debt, insurance fund)` from insurance into the bucket, then the
+  staked tranche for the rest. Carry
   (funding + borrow) is recorded per shard because funding nets to zero only
-  when OI is balanced — the pool is counterparty to the skew. Bad debt that
-  insurance can't cover currently reduces LLP NAV directly; the staked-tranche
-  slash in between is still TODO. Afterwards custody == Σ collateral + queued
-  profit (asserted in every settlement test).
+  when OI is balanced — the pool is counterparty to the skew. Afterwards
+  custody == Σ collateral + queued profit (asserted in every settlement test).
+- **Staked tranche.** Stakes are shares of a per-bucket $LVRT pool, so a
+  slash is pro rata across every staker, including those cooling down to
+  unstake. Slashed $LVRT is valued at the published TWAP (a 30-minute
+  time-weighted EMA of the $LVRT oracle feed, refreshed by a permissionless
+  crank and required to be < 1 h old) less a 5% recovery discount, moved to
+  escrow and booked as a receivable in the bucket's NAV — so LPs don't take
+  the hit while it's being sold. Anyone can buy escrow at the current
+  recovery price; proceeds go straight into the bucket and net against the
+  receivable, so a later price move lands in NAV honestly. Bad debt beyond
+  the tranche's value reduces NAV. A slash that empties the pool bumps a
+  share epoch: old shares (and their unclaimed rewards) are worthless and
+  new stakers start 1:1. If slashing is needed and the TWAP is stale,
+  settlement fails with `StaleTwap`; the cranker refreshes it in the same
+  transaction.
 - **ADL** (GMX-v2-style, adapted to the spec's ranking). It may run only
   while the bucket's trader uPnL is ≥ 95% of its capital (bucket USDC +
   unsettled flows + insurance fund), computed on-chain over every market of
@@ -152,6 +170,6 @@ part of this pass.
 ## Before any mainnet use
 
 This is a skeleton: unaudited, with known TODOs in the money paths
-(slashing, fee-router ledger CPIs). Two audits, verified builds, the published
+(fee-router ledger CPIs, Crab, Twins mint/redeem). Two audits, verified builds, the published
 signer policy and an end-to-end mainnet timelock rehearsal are launch gates
 in the spec (§14).

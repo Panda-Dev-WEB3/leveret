@@ -36,6 +36,8 @@ pub enum VaultError {
     Insufficient,
     #[msg("Invalid parameters")]
     InvalidParams,
+    #[msg("Only this bucket's insurance fund may settle a recovery")]
+    NotInsurance,
     #[msg("Not implemented in the skeleton yet")]
     NotImplemented,
 }
@@ -48,12 +50,13 @@ fn bucket_seeds(b: &BucketState) -> [u8; 1] {
 pub mod lvrt_vault {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>, authority: Pubkey, guardian: Pubkey, engine_signer: Pubkey) -> Result<()> {
+    pub fn initialize(ctx: Context<Initialize>, authority: Pubkey, guardian: Pubkey, engine_signer: Pubkey, insurance_program: Pubkey) -> Result<()> {
         assert_upgrade_authority(&ctx.accounts.program, &ctx.accounts.program_data, &ctx.accounts.payer.key())?;
         let c = &mut ctx.accounts.config;
         c.authority = authority;
         c.guardian = guardian;
         c.engine_signer = engine_signer;
+        c.insurance_program = insurance_program;
         c.usdc_mint = ctx.accounts.usdc_mint.key();
         c.bump = ctx.bumps.config;
         Ok(())
@@ -219,8 +222,9 @@ pub mod lvrt_vault {
 
     /// Engine-only: net settlement of realized trader PnL. `incoming` USDC was
     /// already transferred into `usdc_vault` by the engine (trader losses,
-    /// fees); `outgoing` is paid to engine custody (trader gains).
-    pub fn settle_from_engine(ctx: Context<SettleFromEngine>, incoming: u64, outgoing: u64) -> Result<()> {
+    /// insurance cover); `outgoing` is paid to engine custody (trader gains);
+    /// `receivable` is bad debt covered by slashed $LVRT awaiting sale.
+    pub fn settle_from_engine(ctx: Context<SettleFromEngine>, incoming: u64, outgoing: u64, receivable: u64) -> Result<()> {
         let a = &ctx.accounts;
         require!(a.usdc_vault.amount >= a.bucket_state.usdc_balance + incoming, VaultError::InvalidParams);
         if outgoing > 0 {
@@ -243,6 +247,24 @@ pub mod lvrt_vault {
         }
         let b = &mut ctx.accounts.bucket_state;
         b.usdc_balance = b.usdc_balance + incoming - outgoing;
+        b.slash_receivable += receivable;
+        Ok(())
+    }
+
+    /// Insurance-fund-only (CPI signed by this bucket's fund PDA): `proceeds`
+    /// USDC from a slashed-$LVRT sale has been paid into `usdc_vault`, settling
+    /// `receivable_reduction` of the receivable. Any difference is the market
+    /// moving since the slash and lands in NAV.
+    pub fn collect_recovery(ctx: Context<CollectRecovery>, proceeds: u64, receivable_reduction: u64) -> Result<()> {
+        let a = &ctx.accounts;
+        let id = [a.bucket_state.bucket.id()];
+        let (fund, _) = Pubkey::find_program_address(&[seeds::INSURANCE, &id], &a.config.insurance_program);
+        require_keys_eq!(a.fund_signer.key(), fund, VaultError::NotInsurance);
+        require!(receivable_reduction <= a.bucket_state.slash_receivable, VaultError::InvalidParams);
+        require!(a.usdc_vault.amount >= a.bucket_state.usdc_balance + proceeds, VaultError::InvalidParams);
+        let b = &mut ctx.accounts.bucket_state;
+        b.usdc_balance += proceeds;
+        b.slash_receivable -= receivable_reduction;
         Ok(())
     }
 
@@ -452,4 +474,16 @@ pub struct SettleFromEngine<'info> {
     #[account(mut, token::mint = usdc_mint, token::authority = engine_signer)]
     pub engine_custody: Box<InterfaceAccount<'info, TokenAccount>>,
     pub usdc_token_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct CollectRecovery<'info> {
+    /// The insurance fund PDA of this bucket (checked in the handler).
+    pub fund_signer: Signer<'info>,
+    #[account(seeds = [seeds::CONFIG], bump = config.bump)]
+    pub config: Box<Account<'info, VaultConfig>>,
+    #[account(mut, seeds = [seeds::BUCKET, &[bucket_state.bucket.id()]], bump = bucket_state.bump)]
+    pub bucket_state: Box<Account<'info, BucketState>>,
+    #[account(address = bucket_state.usdc_vault)]
+    pub usdc_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 }

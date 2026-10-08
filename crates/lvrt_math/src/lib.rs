@@ -28,6 +28,7 @@ pub mod pricing;
 pub mod risk;
 pub mod shard;
 pub mod tickets;
+pub mod tranche;
 pub mod vault;
 
 pub use fixed::*;

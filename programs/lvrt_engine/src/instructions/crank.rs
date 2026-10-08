@@ -200,6 +200,16 @@ pub struct SettleShard<'info> {
     pub fund: Box<Account<'info, Fund>>,
     #[account(mut, address = fund.usdc_vault)]
     pub insurance_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    /// $LVRT accounts for the staked-tranche step (checked by lvrt_insurance).
+    /// CHECK: mint, checked in the CPI.
+    pub lvrt_mint: UncheckedAccount<'info>,
+    /// CHECK: the fund's stake vault, checked in the CPI.
+    #[account(mut, address = fund.stake_vault)]
+    pub stake_vault: UncheckedAccount<'info>,
+    /// CHECK: the fund's slash escrow, checked in the CPI.
+    #[account(mut, address = fund.slash_escrow)]
+    pub slash_escrow: UncheckedAccount<'info>,
+    pub lvrt_token_program: Interface<'info, TokenInterface>,
     /// CHECK: CPI target.
     #[account(address = lvrt_vault::ID)]
     pub vault_program: UncheckedAccount<'info>,
@@ -209,6 +219,77 @@ pub struct SettleShard<'info> {
     pub token_program: Interface<'info, TokenInterface>,
 }
 
+// Each CPI lives in its own frame: inlined together they overflow the 4 KB
+// SBF stack of `handle_settle_shard`.
+
+#[inline(never)]
+fn cpi_cover_shortfall<'info>(a: &SettleShard<'info>, amount: u64) -> Result<()> {
+    let bump = a.config.signer_bump;
+    lvrt_insurance::cpi::cover_shortfall(
+        CpiContext::new_with_signer(
+            lvrt_insurance::ID,
+            lvrt_insurance::cpi::accounts::CoverShortfall {
+                engine_signer: a.engine_signer.to_account_info(),
+                config: a.insurance_config.to_account_info(),
+                fund: a.fund.to_account_info(),
+                usdc_mint: a.usdc_mint.to_account_info(),
+                usdc_vault: a.insurance_vault.to_account_info(),
+                destination: a.bucket_vault.to_account_info(),
+                token_program: a.token_program.to_account_info(),
+            },
+            &[&[seeds::AUTHORITY, &[bump]]],
+        ),
+        amount,
+    )?;
+    Ok(())
+}
+
+#[inline(never)]
+fn cpi_slash_tranche<'info>(a: &SettleShard<'info>, amount: u64) -> Result<u64> {
+    let bump = a.config.signer_bump;
+    Ok(lvrt_insurance::cpi::slash_tranche(
+        CpiContext::new_with_signer(
+            lvrt_insurance::ID,
+            lvrt_insurance::cpi::accounts::SlashTranche {
+                engine_signer: a.engine_signer.to_account_info(),
+                config: a.insurance_config.to_account_info(),
+                fund: a.fund.to_account_info(),
+                lvrt_mint: a.lvrt_mint.to_account_info(),
+                stake_vault: a.stake_vault.to_account_info(),
+                slash_escrow: a.slash_escrow.to_account_info(),
+                lvrt_token_program: a.lvrt_token_program.to_account_info(),
+            },
+            &[&[seeds::AUTHORITY, &[bump]]],
+        ),
+        amount,
+    )?
+    .get())
+}
+
+#[inline(never)]
+fn cpi_vault_settle<'info>(a: &SettleShard<'info>, incoming: u64, outgoing: u64, receivable: u64) -> Result<()> {
+    let bump = a.config.signer_bump;
+    lvrt_vault::cpi::settle_from_engine(
+        CpiContext::new_with_signer(
+            lvrt_vault::ID,
+            lvrt_vault::cpi::accounts::SettleFromEngine {
+                engine_signer: a.engine_signer.to_account_info(),
+                config: a.vault_config.to_account_info(),
+                bucket_state: a.bucket_state.to_account_info(),
+                usdc_mint: a.usdc_mint.to_account_info(),
+                usdc_vault: a.bucket_vault.to_account_info(),
+                engine_custody: a.custody.to_account_info(),
+                usdc_token_program: a.token_program.to_account_info(),
+            },
+            &[&[seeds::AUTHORITY, &[bump]]],
+        ),
+        incoming,
+        outgoing,
+        receivable,
+    )
+}
+
+#[inline(never)]
 fn pay_from_custody<'info>(a: &SettleShard<'info>, to: AccountInfo<'info>, amount: u64) -> Result<()> {
     let bump = a.config.signer_bump;
     token_interface::transfer_checked(
@@ -233,8 +314,10 @@ fn pay_from_custody<'info>(a: &SettleShard<'info>, to: AccountInfo<'info>, amoun
 /// - custody → fee router inbox: `fees_accrued`
 /// - custody ↔ LLP bucket: `−trader_pnl + carry − bad_debt` (traders' net
 ///   losses and carry actually collected, or their net gains paid out)
-/// - insurance → bucket: `min(bad_debt, fund)`; the rest is left for the
-///   staked tranche (TODO: slashing) and otherwise reduces LLP NAV
+/// - insurance → bucket: `min(bad_debt, fund)`
+/// - staked $LVRT tranche: slashed for the rest at the TWAP recovery price,
+///   booked as the bucket's receivable; only what it can't cover reduces
+///   LLP NAV
 ///
 /// Afterwards custody holds exactly Σ trader collateral + queued profit.
 pub fn handle_settle_shard<'info>(ctx: Context<'info, SettleShard<'info>>, _custody_index: u8) -> Result<()> {
@@ -245,13 +328,10 @@ pub fn handle_settle_shard<'info>(ctx: Context<'info, SettleShard<'info>>, _cust
     require!(fees > 0 || net != 0 || s.bad_debt > 0, EngineError::Noop);
     let to_bucket = i64::try_from(net).map_err(|_| EngineError::InvalidParams)?;
     let covered = s.bad_debt.min(a.fund.balance);
-    let uncovered = s.bad_debt - covered;
 
     let outflow = fees as u128 + to_bucket.max(0) as u128;
     require!(a.custody.amount as u128 >= outflow, EngineError::InsufficientCustody);
 
-    let bump = a.config.signer_bump;
-    let signer: &[&[&[u8]]] = &[&[seeds::AUTHORITY, &[bump]]];
     if fees > 0 {
         pay_from_custody(a, a.fee_inbox.to_account_info(), fees)?;
     }
@@ -259,44 +339,20 @@ pub fn handle_settle_shard<'info>(ctx: Context<'info, SettleShard<'info>>, _cust
         pay_from_custody(a, a.bucket_vault.to_account_info(), to_bucket as u64)?;
     }
     if covered > 0 {
-        lvrt_insurance::cpi::cover_shortfall(
-            CpiContext::new_with_signer(
-                lvrt_insurance::ID,
-                lvrt_insurance::cpi::accounts::CoverShortfall {
-                    engine_signer: a.engine_signer.to_account_info(),
-                    config: a.insurance_config.to_account_info(),
-                    fund: a.fund.to_account_info(),
-                    usdc_mint: a.usdc_mint.to_account_info(),
-                    usdc_vault: a.insurance_vault.to_account_info(),
-                    destination: a.bucket_vault.to_account_info(),
-                    token_program: a.token_program.to_account_info(),
-                },
-                signer,
-            ),
-            covered,
-        )?;
+        cpi_cover_shortfall(a, covered)?;
     }
+    // next step: the staked $LVRT tranche covers what insurance couldn't,
+    // as a receivable the bucket collects when the slashed $LVRT is sold
+    let slashed = if s.bad_debt > covered { cpi_slash_tranche(a, s.bad_debt - covered)? } else { 0 };
+    // whatever is left reduces LLP NAV
+    let uncovered = s.bad_debt - covered - slashed;
+
     let incoming = to_bucket.max(0) as u64 + covered;
     let outgoing = (-to_bucket).max(0) as u64;
-    if incoming > 0 || outgoing > 0 {
-        // records `incoming` (already transferred) and pays `outgoing` to custody
-        lvrt_vault::cpi::settle_from_engine(
-            CpiContext::new_with_signer(
-                lvrt_vault::ID,
-                lvrt_vault::cpi::accounts::SettleFromEngine {
-                    engine_signer: a.engine_signer.to_account_info(),
-                    config: a.vault_config.to_account_info(),
-                    bucket_state: a.bucket_state.to_account_info(),
-                    usdc_mint: a.usdc_mint.to_account_info(),
-                    usdc_vault: a.bucket_vault.to_account_info(),
-                    engine_custody: a.custody.to_account_info(),
-                    usdc_token_program: a.token_program.to_account_info(),
-                },
-                signer,
-            ),
-            incoming,
-            outgoing,
-        )?;
+    if incoming > 0 || outgoing > 0 || slashed > 0 {
+        // records `incoming` (already transferred), pays `outgoing` to custody
+        // and books `slashed` as a receivable
+        cpi_vault_settle(a, incoming, outgoing, slashed)?;
     }
 
     let market_id = a.market.market_id;
@@ -309,6 +365,6 @@ pub fn handle_settle_shard<'info>(ctx: Context<'info, SettleShard<'info>>, _cust
     s.trader_pnl_unsettled = 0;
     s.carry_unsettled = 0;
     s.bad_debt = 0;
-    emit!(ShardSettled { market_id, shard: s.index, fees, to_bucket, insurance_covered: covered, uncovered });
+    emit!(ShardSettled { market_id, shard: s.index, fees, to_bucket, insurance_covered: covered, tranche_covered: slashed, uncovered });
     Ok(())
 }

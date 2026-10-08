@@ -37,6 +37,12 @@ pub mod insurance {
     pub fn stake_vault(b: Bucket) -> Pubkey {
         pda(&[seeds::STAKE, &[b.id()]], &lvrt_insurance::ID)
     }
+    pub fn slash_escrow(b: Bucket) -> Pubkey {
+        pda(&[seeds::SLASH_ESCROW, &[b.id()]], &lvrt_insurance::ID)
+    }
+    pub fn stake(fund: &Pubkey, owner: &Pubkey) -> Pubkey {
+        pda(&[seeds::STAKE, fund.as_ref(), owner.as_ref()], &lvrt_insurance::ID)
+    }
 }
 
 pub mod router {
@@ -55,9 +61,14 @@ pub mod router {
     }
 }
 
+/// Oracle market id of the $LVRT feed behind the tranche TWAP.
+pub const LVRT_MARKET: u32 = 99;
+pub const LVRT_DECIMALS: u8 = 6;
+
 pub struct Pool {
     pub bucket: Bucket,
     pub treasury: Pubkey,
+    pub lvrt_mint: Pubkey,
 }
 
 /// Initialise vault, insurance and fee router (once per Env) and create the
@@ -70,7 +81,12 @@ pub fn setup(env: &mut Env, bucket: Bucket, max_oi: u64) -> Pool {
     env.ok(
         &[ix(
             lvrt_vault::ID,
-            lvrt_vault::instruction::Initialize { authority: a.pubkey(), guardian: env.guardian.pubkey(), engine_signer },
+            lvrt_vault::instruction::Initialize {
+                authority: a.pubkey(),
+                guardian: env.guardian.pubkey(),
+                engine_signer,
+                insurance_program: lvrt_insurance::ID,
+            },
             lvrt_vault::accounts::Initialize {
                 payer: d.pubkey(),
                 config: vault::config(),
@@ -105,11 +121,16 @@ pub fn setup(env: &mut Env, bucket: Bucket, max_oi: u64) -> Pool {
         &[&a],
     );
 
-    let lvrt_mint = env.create_mint(6);
+    let lvrt_mint = env.create_mint(LVRT_DECIMALS);
     env.ok(
         &[ix(
             lvrt_insurance::ID,
-            lvrt_insurance::instruction::Initialize { authority: a.pubkey(), guardian: env.guardian.pubkey(), engine_signer },
+            lvrt_insurance::instruction::Initialize {
+                authority: a.pubkey(),
+                guardian: env.guardian.pubkey(),
+                engine_signer,
+                lvrt_price_state: crate::oracle::price(LVRT_MARKET),
+            },
             lvrt_insurance::accounts::Initialize {
                 payer: d.pubkey(),
                 config: insurance::config(),
@@ -136,6 +157,7 @@ pub fn setup(env: &mut Env, bucket: Bucket, max_oi: u64) -> Pool {
                 lvrt_mint,
                 usdc_vault: insurance::usdc_vault(bucket),
                 stake_vault: insurance::stake_vault(bucket),
+                slash_escrow: insurance::slash_escrow(bucket),
                 usdc_token_program: SPL_TOKEN,
                 lvrt_token_program: SPL_TOKEN,
                 system_program: SYSTEM,
@@ -182,7 +204,7 @@ pub fn setup(env: &mut Env, bucket: Bucket, max_oi: u64) -> Pool {
         )],
         &[&d],
     );
-    Pool { bucket, treasury }
+    Pool { bucket, treasury, lvrt_mint }
 }
 
 /// An LP deposits `amount` USDC into the bucket (NAV must be fresh).
@@ -252,6 +274,10 @@ pub fn settle_ix(pool: &Pool, market_id: u32, shard_index: u8, custody_index: u8
             insurance_config: insurance::config(),
             fund: insurance::fund(pool.bucket),
             insurance_vault: insurance::usdc_vault(pool.bucket),
+            lvrt_mint: pool.lvrt_mint,
+            stake_vault: insurance::stake_vault(pool.bucket),
+            slash_escrow: insurance::slash_escrow(pool.bucket),
+            lvrt_token_program: SPL_TOKEN,
             vault_program: lvrt_vault::ID,
             insurance_program: lvrt_insurance::ID,
             token_program: SPL_TOKEN,
@@ -284,4 +310,133 @@ pub fn distribute_ix(pool: &Pool) -> Instruction {
 /// Σ USDC across all engine custody shards.
 pub fn custody_total(env: &Env) -> u64 {
     (0..crate::engine::CUSTODY_COUNT).map(|k| env.token_balance(&crate::engine::custody(k))).sum()
+}
+
+// ------------------------------------------------------------ staked tranche
+
+/// `staker` stakes `amount` $LVRT (minted to them first); returns their $LVRT account.
+pub fn stake(env: &mut Env, pool: &Pool, staker: &Keypair, amount: u64) -> Pubkey {
+    let lvrt = env.token_account_with(&pool.lvrt_mint, &staker.pubkey(), &SPL_TOKEN, amount);
+    let fund = insurance::fund(pool.bucket);
+    env.ok(
+        &[ix(
+            lvrt_insurance::ID,
+            lvrt_insurance::instruction::Stake { amount },
+            lvrt_insurance::accounts::StakeCtx {
+                owner: staker.pubkey(),
+                config: insurance::config(),
+                fund,
+                stake: insurance::stake(&fund, &staker.pubkey()),
+                lvrt_mint: pool.lvrt_mint,
+                owner_lvrt: lvrt,
+                stake_vault: insurance::stake_vault(pool.bucket),
+                lvrt_token_program: SPL_TOKEN,
+                system_program: SYSTEM,
+            },
+            vec![],
+        )],
+        &[staker],
+    );
+    lvrt
+}
+
+pub fn update_twap_ix() -> Instruction {
+    ix(
+        lvrt_insurance::ID,
+        lvrt_insurance::instruction::UpdateTwap {},
+        lvrt_insurance::accounts::UpdateTwap { config: insurance::config(), price_state: crate::oracle::price(LVRT_MARKET) },
+        vec![],
+    )
+}
+
+pub fn request_unstake_ix(pool: &Pool, owner: &Pubkey, shares: u64) -> Instruction {
+    let fund = insurance::fund(pool.bucket);
+    ix(
+        lvrt_insurance::ID,
+        lvrt_insurance::instruction::RequestUnstake { shares },
+        lvrt_insurance::accounts::StakeOwner { owner: *owner, fund, stake: insurance::stake(&fund, owner) },
+        vec![],
+    )
+}
+
+pub fn unstake_ix(pool: &Pool, owner: &Pubkey, owner_lvrt: &Pubkey) -> Instruction {
+    let fund = insurance::fund(pool.bucket);
+    ix(
+        lvrt_insurance::ID,
+        lvrt_insurance::instruction::Unstake {},
+        lvrt_insurance::accounts::Unstake {
+            owner: *owner,
+            config: insurance::config(),
+            fund,
+            stake: insurance::stake(&fund, owner),
+            lvrt_mint: pool.lvrt_mint,
+            owner_lvrt: *owner_lvrt,
+            stake_vault: insurance::stake_vault(pool.bucket),
+            lvrt_token_program: SPL_TOKEN,
+        },
+        vec![],
+    )
+}
+
+pub fn claim_rewards_ix(pool: &Pool, owner: &Pubkey, owner_usdc: &Pubkey) -> Instruction {
+    let fund = insurance::fund(pool.bucket);
+    ix(
+        lvrt_insurance::ID,
+        lvrt_insurance::instruction::ClaimRewards {},
+        lvrt_insurance::accounts::ClaimRewards {
+            owner: *owner,
+            fund,
+            stake: insurance::stake(&fund, owner),
+            usdc_mint: USDC_MINT,
+            owner_usdc: *owner_usdc,
+            usdc_vault: insurance::usdc_vault(pool.bucket),
+            token_program: SPL_TOKEN,
+        },
+        vec![],
+    )
+}
+
+pub fn add_staker_rewards(env: &mut Env, pool: &Pool, amount: u64) {
+    let payer = env.funded();
+    let src = env.usdc_account(&payer.pubkey(), amount);
+    env.ok(
+        &[ix(
+            lvrt_insurance::ID,
+            lvrt_insurance::instruction::AddStakerRewards { amount },
+            lvrt_insurance::accounts::Contribute {
+                payer: payer.pubkey(),
+                fund: insurance::fund(pool.bucket),
+                usdc_mint: USDC_MINT,
+                source: src,
+                usdc_vault: insurance::usdc_vault(pool.bucket),
+                token_program: SPL_TOKEN,
+            },
+            vec![],
+        )],
+        &[&payer],
+    );
+}
+
+pub fn buy_slashed_ix(pool: &Pool, buyer: &Pubkey, buyer_lvrt: &Pubkey, buyer_usdc: &Pubkey, lvrt: u64, max_usdc: u64) -> Instruction {
+    ix(
+        lvrt_insurance::ID,
+        lvrt_insurance::instruction::BuySlashed { lvrt, max_usdc },
+        lvrt_insurance::accounts::BuySlashed {
+            buyer: *buyer,
+            config: insurance::config(),
+            fund: insurance::fund(pool.bucket),
+            lvrt_mint: pool.lvrt_mint,
+            slash_escrow: insurance::slash_escrow(pool.bucket),
+            buyer_lvrt: *buyer_lvrt,
+            usdc_mint: USDC_MINT,
+            buyer_usdc: *buyer_usdc,
+            vault_config: vault::config(),
+            bucket_state: vault::bucket(pool.bucket),
+            bucket_vault: vault::usdc_vault(pool.bucket),
+            vault_program: lvrt_vault::ID,
+            lvrt_token_program: SPL_TOKEN,
+            usdc_token_program: SPL_TOKEN,
+        },
+        vec![],
+    )
 }

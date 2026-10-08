@@ -42,6 +42,8 @@ pub mod seeds {
     pub const WITHDRAWAL: &[u8] = b"withdrawal";
     pub const INSURANCE: &[u8] = b"insurance";
     pub const STAKE: &[u8] = b"stake";
+    /// Per-bucket escrow of slashed $LVRT awaiting sale: `[SLASH_ESCROW, &[bucket]]`.
+    pub const SLASH_ESCROW: &[u8] = b"slashed";
     pub const POWER: &[u8] = b"power";
     pub const POWER_MINT: &[u8] = b"power_mint";
     pub const SHORT_VAULT: &[u8] = b"short";

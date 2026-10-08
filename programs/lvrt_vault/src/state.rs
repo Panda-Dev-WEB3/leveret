@@ -8,6 +8,8 @@ pub struct VaultConfig {
     pub guardian: Pubkey,
     /// lvrt_engine signer PDA: the only key that can settle PnL or report exposure.
     pub engine_signer: Pubkey,
+    /// lvrt_insurance program: its per-bucket fund PDA pays slash recoveries.
+    pub insurance_program: Pubkey,
     pub usdc_mint: Pubkey,
     pub bump: u8,
 }
@@ -29,6 +31,9 @@ pub struct BucketState {
     /// Trader uPnL against the bucket, marked at the oracle (reported by the engine).
     pub trader_upnl: i64,
     pub pending_payouts: u64,
+    /// USDC owed to the bucket for slashed $LVRT not yet sold (counts in NAV,
+    /// so the staked tranche absorbs bad debt before LPs do).
+    pub slash_receivable: u64,
     /// Open notional the bucket is counterparty to.
     pub reserved_notional: u64,
     pub max_oi: u64,
@@ -41,6 +46,7 @@ pub struct BucketState {
 impl BucketState {
     pub fn nav(&self) -> i64 {
         lvrt_common::lvrt_math::vault::nav(self.usdc_balance as i64, self.accrued_fees as i64, self.trader_upnl, self.pending_payouts as i64)
+            .saturating_add(self.slash_receivable as i64)
     }
     pub fn utilization_bps(&self) -> i64 {
         lvrt_common::lvrt_math::vault::utilization_bps(self.reserved_notional as i64, self.usdc_balance as i64)

@@ -1915,6 +1915,8 @@ dependencies = [
  "anchor-lang",
  "anchor-spl",
  "lvrt_common",
+ "lvrt_oracle",
+ "lvrt_vault",
 ]
 
 [[package]]
