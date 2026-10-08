@@ -11,6 +11,9 @@ use lvrt_vault::BucketState;
 
 declare_id!("GxQSsXZi4uYAieZWyMBvk8c7dBbkKUQWJ5CoHKUHUeQF");
 
+/// Oracle operators can receive at most 20% of total fees.
+pub const MAX_OPERATORS_BPS: u16 = 2_000;
+
 #[error_code]
 pub enum RouterError {
     #[msg("Signer is not the timelock authority")]
@@ -19,6 +22,10 @@ pub enum RouterError {
     BucketMismatch,
     #[msg("Nothing to distribute")]
     Empty,
+    #[msg("Operator share above the 20% cap")]
+    OperatorShareTooHigh,
+    #[msg("Operator account required while the operator share is set")]
+    MissingOperators,
     #[msg("Not implemented in the skeleton yet")]
     NotImplemented,
 }
@@ -31,6 +38,10 @@ pub struct RouterConfig {
     pub treasury: Pubkey,
     /// USDC accumulated for $LVRT buy-and-burn (5%).
     pub burn_vault: Pubkey,
+    /// Oracle-operator USDC account and its share of total fees (bps),
+    /// taken from the workers' 80% before the LP remainder.
+    pub operators: Pubkey,
+    pub operators_bps: u16,
     pub signer_bump: u8,
     pub bump: u8,
 }
@@ -40,6 +51,7 @@ pub struct FeesDistributed {
     pub bucket: lvrt_common::Bucket,
     pub total: u64,
     pub lp: u64,
+    pub operators: u64,
     pub insurance: u64,
     pub treasury: u64,
     pub stakers: u64,
@@ -56,8 +68,20 @@ pub mod lvrt_fee_router {
         c.authority = authority;
         c.treasury = treasury;
         c.burn_vault = ctx.accounts.burn_vault.key();
+        c.operators = Pubkey::default();
+        c.operators_bps = 0;
         c.signer_bump = ctx.bumps.router_signer;
         c.bump = ctx.bumps.config;
+        Ok(())
+    }
+
+    /// Timelock: oracle-operator share of fees (≤ 20% of the total, out of
+    /// the workers' 80%).
+    pub fn set_operators(ctx: Context<SetOperators>, operators: Pubkey, operators_bps: u16) -> Result<()> {
+        require!(operators_bps <= MAX_OPERATORS_BPS, RouterError::OperatorShareTooHigh);
+        let c = &mut ctx.accounts.config;
+        c.operators = operators;
+        c.operators_bps = operators_bps;
         Ok(())
     }
 
@@ -75,19 +99,32 @@ pub mod lvrt_fee_router {
         require!(total > 0, RouterError::Empty);
         let split = fees::split_fee(total, a.fund.fee_share_bps()).map_err(lvrt_common::math_err)?;
 
-        send(a, a.bucket_vault.to_account_info(), split.lp)?;
+        // oracle operators come out of the workers' share, before the LP remainder
+        let operators = (total as u128 * a.config.operators_bps as u128 / 10_000) as u64;
+        let operators = operators.min(split.lp);
+        let lp = split.lp - operators;
+        if operators > 0 {
+            let to = a.operators.as_ref().ok_or(RouterError::MissingOperators)?;
+            send(a, to.to_account_info(), operators)?;
+        }
+        send(a, a.bucket_vault.to_account_info(), lp)?;
         // insurance top-up and staker rewards share the fund's vault
         send(a, a.insurance_vault.to_account_info(), split.insurance + split.stakers)?;
         send(a, a.treasury.to_account_info(), split.treasury)?;
         send(a, a.burn_vault.to_account_info(), split.burn)?;
-        // TODO(fee_router): CPI lvrt_vault (credit `accrued_fees`) and
-        // lvrt_insurance (`contribute` / `add_staker_rewards`) so their
-        // ledgers move with the tokens; pay keeper / oracle-operator shares
-        // out of the 80% before the LP remainder.
+
+        // the receiving ledgers move with the tokens
+        if lp > 0 {
+            cpi_credit_vault(a, lp)?;
+        }
+        if split.insurance + split.stakers > 0 {
+            cpi_credit_insurance(a, split.insurance, split.stakers)?;
+        }
         emit!(FeesDistributed {
             bucket: a.fund.bucket,
             total,
-            lp: split.lp,
+            lp,
+            operators,
             insurance: split.insurance,
             treasury: split.treasury,
             stakers: split.stakers,
@@ -102,6 +139,44 @@ pub mod lvrt_fee_router {
     }
 }
 
+#[inline(never)]
+fn cpi_credit_vault<'info>(a: &Distribute<'info>, amount: u64) -> Result<()> {
+    let bump = a.config.signer_bump;
+    lvrt_vault::cpi::credit_fees(
+        CpiContext::new_with_signer(
+            lvrt_vault::ID,
+            lvrt_vault::cpi::accounts::CreditFees {
+                router_signer: a.router_signer.to_account_info(),
+                config: a.vault_config.to_account_info(),
+                bucket_state: a.bucket_state.to_account_info(),
+                usdc_vault: a.bucket_vault.to_account_info(),
+            },
+            &[&[seeds::ROUTER, &[bump]]],
+        ),
+        amount,
+    )
+}
+
+#[inline(never)]
+fn cpi_credit_insurance<'info>(a: &Distribute<'info>, insurance: u64, stakers: u64) -> Result<()> {
+    let bump = a.config.signer_bump;
+    lvrt_insurance::cpi::credit_fees(
+        CpiContext::new_with_signer(
+            lvrt_insurance::ID,
+            lvrt_insurance::cpi::accounts::CreditFees {
+                router_signer: a.router_signer.to_account_info(),
+                config: a.insurance_config.to_account_info(),
+                fund: a.fund.to_account_info(),
+                usdc_vault: a.insurance_vault.to_account_info(),
+            },
+            &[&[seeds::ROUTER, &[bump]]],
+        ),
+        insurance,
+        stakers,
+    )
+}
+
+#[inline(never)]
 fn send<'info>(a: &Distribute<'info>, to: AccountInfo<'info>, amount: u64) -> Result<()> {
     if amount == 0 {
         return Ok(());
@@ -181,8 +256,14 @@ pub struct Distribute<'info> {
     /// The fee inbox of exactly this bucket.
     #[account(mut, seeds = [seeds::FEE_INBOX, &[bucket_state.bucket.id()]], bump)]
     pub inbox: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, seeds = [seeds::BUCKET, &[bucket_state.bucket.id()]], bump = bucket_state.bump, seeds::program = lvrt_vault::ID)]
     pub bucket_state: Box<Account<'info, BucketState>>,
+    #[account(mut, seeds = [seeds::INSURANCE, &[fund.bucket.id()]], bump = fund.bump, seeds::program = lvrt_insurance::ID)]
     pub fund: Box<Account<'info, Fund>>,
+    /// CHECK: verified by lvrt_vault in the CPI.
+    pub vault_config: UncheckedAccount<'info>,
+    /// CHECK: verified by lvrt_insurance in the CPI.
+    pub insurance_config: UncheckedAccount<'info>,
     #[account(mut, address = bucket_state.usdc_vault)]
     pub bucket_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     /// Receives the insurance carve-out and the staker share (tracked
@@ -193,5 +274,21 @@ pub struct Distribute<'info> {
     pub treasury: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, address = config.burn_vault)]
     pub burn_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    /// Required while `operators_bps > 0`.
+    #[account(mut, address = config.operators)]
+    pub operators: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
+    /// CHECK: CPI target.
+    #[account(address = lvrt_vault::ID)]
+    pub vault_program: UncheckedAccount<'info>,
+    /// CHECK: CPI target.
+    #[account(address = lvrt_insurance::ID)]
+    pub insurance_program: UncheckedAccount<'info>,
     pub token_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct SetOperators<'info> {
+    pub authority: Signer<'info>,
+    #[account(mut, seeds = [seeds::CONFIG], bump = config.bump, has_one = authority @ RouterError::NotAuthority)]
+    pub config: Box<Account<'info, RouterConfig>>,
 }

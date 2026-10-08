@@ -38,6 +38,8 @@ pub enum VaultError {
     InvalidParams,
     #[msg("Only this bucket's insurance fund may settle a recovery")]
     NotInsurance,
+    #[msg("Only the fee router may credit fees")]
+    NotFeeRouter,
     #[msg("Not implemented in the skeleton yet")]
     NotImplemented,
 }
@@ -50,13 +52,21 @@ fn bucket_seeds(b: &BucketState) -> [u8; 1] {
 pub mod lvrt_vault {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>, authority: Pubkey, guardian: Pubkey, engine_signer: Pubkey, insurance_program: Pubkey) -> Result<()> {
+    pub fn initialize(
+        ctx: Context<Initialize>,
+        authority: Pubkey,
+        guardian: Pubkey,
+        engine_signer: Pubkey,
+        insurance_program: Pubkey,
+        fee_router_program: Pubkey,
+    ) -> Result<()> {
         assert_upgrade_authority(&ctx.accounts.program, &ctx.accounts.program_data, &ctx.accounts.payer.key())?;
         let c = &mut ctx.accounts.config;
         c.authority = authority;
         c.guardian = guardian;
         c.engine_signer = engine_signer;
         c.insurance_program = insurance_program;
+        c.fee_router_program = fee_router_program;
         c.usdc_mint = ctx.accounts.usdc_mint.key();
         c.bump = ctx.bumps.config;
         Ok(())
@@ -248,6 +258,20 @@ pub mod lvrt_vault {
         let b = &mut ctx.accounts.bucket_state;
         b.usdc_balance = b.usdc_balance + incoming - outgoing;
         b.slash_receivable += receivable;
+        Ok(())
+    }
+
+    /// Fee-router-only (CPI signed by the router PDA): the LP share of fees
+    /// has been paid into `usdc_vault`; credit it so NAV accrues.
+    pub fn credit_fees(ctx: Context<CreditFees>, amount: u64) -> Result<()> {
+        let a = &ctx.accounts;
+        let (router, _) = Pubkey::find_program_address(&[seeds::ROUTER], &a.config.fee_router_program);
+        require_keys_eq!(a.router_signer.key(), router, VaultError::NotFeeRouter);
+        require!(amount > 0, VaultError::InvalidParams);
+        require!(a.usdc_vault.amount >= a.bucket_state.usdc_balance + amount, VaultError::InvalidParams);
+        let b = &mut ctx.accounts.bucket_state;
+        b.usdc_balance += amount;
+        emit!(FeesCredited { bucket: b.bucket, amount, nav: b.nav() });
         Ok(())
     }
 
@@ -486,4 +510,23 @@ pub struct CollectRecovery<'info> {
     pub bucket_state: Box<Account<'info, BucketState>>,
     #[account(address = bucket_state.usdc_vault)]
     pub usdc_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+}
+
+#[derive(Accounts)]
+pub struct CreditFees<'info> {
+    /// The fee router signer PDA (checked in the handler).
+    pub router_signer: Signer<'info>,
+    #[account(seeds = [seeds::CONFIG], bump = config.bump)]
+    pub config: Box<Account<'info, VaultConfig>>,
+    #[account(mut, seeds = [seeds::BUCKET, &[bucket_state.bucket.id()]], bump = bucket_state.bump)]
+    pub bucket_state: Box<Account<'info, BucketState>>,
+    #[account(address = bucket_state.usdc_vault)]
+    pub usdc_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+}
+
+#[event]
+pub struct FeesCredited {
+    pub bucket: Bucket,
+    pub amount: u64,
+    pub nav: i64,
 }

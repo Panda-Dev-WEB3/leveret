@@ -43,6 +43,26 @@ scripts/wsl-build.sh
 keys/             program keypairs (git-ignored; back these up)
 ```
 
+## Website (`web/`)
+
+Next.js 16 static export (React 19, Tailwind 4, three.js hero): marketing
+pages for the seven families plus a `/dashboard` workspace. The dashboard is
+**reference-only** today — prices are static references, orders and agent
+policies are drafts kept in `localStorage`, and the wallet integration only
+calls `connect()` to show the public key (it never asks for a signature).
+
+```bash
+cd web && npm ci && npm run build && npm run preview   # http://127.0.0.1:3000
+```
+
+Requires Node ≥ 22.12. npm 11 blocks the `sharp` / `unrs-resolver` install
+scripts by default; neither is needed (images are unoptimized in the static
+export and ESLint isn't part of the build). When hosting `web/out` anywhere
+other than Vercel, rewrite `**/__next.<seg>.<rest>.txt` →
+`**/__next.<seg>/<rest>.txt` (Next 16 prefetch payloads; `scripts/preview.mjs`
+does this locally) — without it client-side navigation falls back to full page
+loads.
+
 ## Build and test
 
 Programs build in WSL (Ubuntu 24.04). The script mirrors the repo to
@@ -62,7 +82,7 @@ crate also runs natively on Windows: `cargo test -p lvrt_math`.
 `lvrt_math` (54 unit tests) — including the §14 fixture *a power-market
 split keeps every long's value unchanged to 1e-9* (4:1, 1:10, 3:2).
 
-LiteSVM integration (`tests/tests/*.rs`, 30 tests):
+LiteSVM integration (`tests/tests/*.rs`, 34 tests):
 
 | Test | Spec rule |
 |---|---|
@@ -93,6 +113,10 @@ LiteSVM integration (`tests/tests/*.rs`, 30 tests):
 | `slashing_needs_a_fresh_twap` | TWAP freshness, refresh + settle in one tx |
 | `a_tranche_smaller_than_the_loss_is_wiped_and_the_rest_hits_nav` | full wipe, share epoch reset, remainder to NAV |
 | `unstake_after_cooldown_pays_the_post_slash_amount_and_rewards_are_claimable` | 14-day cooldown still slashable, rewards per share |
+| `distribute_credits_the_vault_and_insurance_ledgers` | fee split moves ledgers with tokens; LP share accrues to NAV; stakers can claim |
+| `staker_share_joins_the_fund_when_nobody_stakes` | no stranded staker share |
+| `operator_share_comes_out_of_the_lp_remainder` | oracle-operator share, 20% cap, timelock only |
+| `only_the_fee_router_can_credit_ledgers` | ledger credits are router-PDA only |
 | `late_crossing_report_knocks_the_ticket_out` | §14 fixture |
 | `buy_prices_the_ticket_and_enforces_distance` | §9 price, 3% minimum distance |
 | `evidence_from_before_issue_is_rejected` | §9 knock-out evidence window |
@@ -106,7 +130,7 @@ LiteSVM integration (`tests/tests/*.rs`, 30 tests):
 | engine | everything in the fill path, cross/isolated margin, delegates with budgets, deposit/withdraw (USDC only), circuit-breaker queue, liquidation, TP/SL, shard merge + funding + borrow, split/dividend crank, tighten-only risk setters, `settle_shard` (fees → fee router, net PnL + carry ↔ bucket, bad debt → insurance → staked tranche), ADL | USDT→USDC Jupiter deposit, trigger re-pricing on splits, limit-open triggers |
 | vault | buckets, LP mint, NAV deposit/redeem ±5 bps, dead shares, 48h queue, engine-only exposure report + settlement, slash receivable in NAV, insurance-only recovery collection | composite LLP router, hedge-router authority |
 | insurance | funds, targets, contributions, engine-only shortfall cover, share-based staked tranche, TWAP crank, pro-rata slashing into escrow, recovery sales, 14-day unstake, reward claims | — |
-| fee_router | per-bucket fee inbox PDAs, 80/10/5/5 split | ledger CPIs into vault/insurance, keeper/oracle-operator shares, buy-and-burn |
+| fee_router | per-bucket fee inbox PDAs, 80/10/5/5 split, optional oracle-operator share, ledger CPIs into vault + insurance | buy-and-burn |
 | power | index, normFactor accrual, daily carry, ShortVault mint/burn at 200%/150%, AMM buy inside band, split | AMM sell, batch liquidations, Crab, `redeem_at_index`, Token-2022 metadata |
 | factor | registry, signed publishes (methodology hash checked), liveness pause, 30-day methodology change, guardian pause | factor perps trade on the engine via an oracle feed signed by the same enclave key |
 | tickets | buy with distance/caps/stress budget, sell-back (session only), knock-out by live or late signed evidence, transfer, gifts | split handling, routing liquidity through `lvrt_vault` |
@@ -126,6 +150,15 @@ part of this pass.
 - **OI caps are in base units**, notional caps in USDC.
 - **Borrow utilization** is measured against the market's OI caps until the
   vault reports bucket utilization on-chain.
+- **Fee ledgers.** `distribute` pays the LP share into the bucket and the
+  insurance + staker shares into the fund's vault, then CPIs
+  `lvrt_vault::credit_fees` (raises `usdc_balance`, so NAV accrues) and
+  `lvrt_insurance::credit_fees` (fund balance + rewards per share). Both
+  accept only the fee router's signer PDA and check the USDC has arrived.
+  With no stakers, the staker share joins the insurance fund. Keepers and
+  liquidators are already paid by trigger and liquidation bounties; oracle
+  operators get an optional share of fees (timelock-set, ≤ 20%, default 0)
+  out of the workers' 80% before the LP remainder.
 - **Insurance carve-out comes out of the 80% workers' share** (the spec gives
   both "80% to workers" and "20% of bucket fees to insurance").
 - **Settlement.** Trades only move internal balances; `settle_shard`
@@ -170,6 +203,6 @@ part of this pass.
 ## Before any mainnet use
 
 This is a skeleton: unaudited, with known TODOs in the money paths
-(fee-router ledger CPIs, Crab, Twins mint/redeem). Two audits, verified builds, the published
+(Crab, Twins mint/redeem, buy-and-burn). Two audits, verified builds, the published
 signer policy and an end-to-end mainnet timelock rehearsal are launch gates
 in the spec (§14).

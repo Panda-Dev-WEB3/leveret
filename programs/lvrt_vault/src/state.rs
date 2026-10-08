@@ -10,6 +10,8 @@ pub struct VaultConfig {
     pub engine_signer: Pubkey,
     /// lvrt_insurance program: its per-bucket fund PDA pays slash recoveries.
     pub insurance_program: Pubkey,
+    /// lvrt_fee_router program: its signer PDA credits the LP fee share.
+    pub fee_router_program: Pubkey,
     pub usdc_mint: Pubkey,
     pub bump: u8,
 }

@@ -86,6 +86,7 @@ pub fn setup(env: &mut Env, bucket: Bucket, max_oi: u64) -> Pool {
                 guardian: env.guardian.pubkey(),
                 engine_signer,
                 insurance_program: lvrt_insurance::ID,
+                fee_router_program: lvrt_fee_router::ID,
             },
             lvrt_vault::accounts::Initialize {
                 payer: d.pubkey(),
@@ -130,6 +131,7 @@ pub fn setup(env: &mut Env, bucket: Bucket, max_oi: u64) -> Pool {
                 guardian: env.guardian.pubkey(),
                 engine_signer,
                 lvrt_price_state: crate::oracle::price(LVRT_MARKET),
+                fee_router_program: lvrt_fee_router::ID,
             },
             lvrt_insurance::accounts::Initialize {
                 payer: d.pubkey(),
@@ -287,6 +289,10 @@ pub fn settle_ix(pool: &Pool, market_id: u32, shard_index: u8, custody_index: u8
 }
 
 pub fn distribute_ix(pool: &Pool) -> Instruction {
+    distribute_with_operators_ix(pool, None)
+}
+
+pub fn distribute_with_operators_ix(pool: &Pool, operators: Option<Pubkey>) -> Instruction {
     ix(
         lvrt_fee_router::ID,
         lvrt_fee_router::instruction::Distribute {},
@@ -297,10 +303,15 @@ pub fn distribute_ix(pool: &Pool) -> Instruction {
             inbox: router::inbox(pool.bucket),
             bucket_state: vault::bucket(pool.bucket),
             fund: insurance::fund(pool.bucket),
+            vault_config: vault::config(),
+            insurance_config: insurance::config(),
             bucket_vault: vault::usdc_vault(pool.bucket),
             insurance_vault: insurance::usdc_vault(pool.bucket),
             treasury: pool.treasury,
             burn_vault: router::burn_vault(),
+            operators,
+            vault_program: lvrt_vault::ID,
+            insurance_program: lvrt_insurance::ID,
             token_program: SPL_TOKEN,
         },
         vec![],
@@ -437,6 +448,15 @@ pub fn buy_slashed_ix(pool: &Pool, buyer: &Pubkey, buyer_lvrt: &Pubkey, buyer_us
             lvrt_token_program: SPL_TOKEN,
             usdc_token_program: SPL_TOKEN,
         },
+        vec![],
+    )
+}
+
+pub fn set_operators_ix(authority: &Pubkey, operators: &Pubkey, bps: u16) -> Instruction {
+    ix(
+        lvrt_fee_router::ID,
+        lvrt_fee_router::instruction::SetOperators { operators: *operators, operators_bps: bps },
+        lvrt_fee_router::accounts::SetOperators { authority: *authority, config: router::config() },
         vec![],
     )
 }

@@ -47,6 +47,8 @@ pub enum InsuranceError {
     Slippage,
     #[msg("Nothing to do")]
     Noop,
+    #[msg("Only the fee router may credit fees")]
+    NotFeeRouter,
     #[msg("Invalid parameters")]
     InvalidParams,
 }
@@ -68,6 +70,8 @@ pub struct InsuranceConfig {
     pub twap_ts: i64,
     pub twap_window_s: i64,
     pub recovery_discount_bps: u16,
+    /// lvrt_fee_router program: its signer PDA credits fee shares.
+    pub fee_router_program: Pubkey,
     pub bump: u8,
 }
 
@@ -165,7 +169,14 @@ fn sync_stake(f: &Fund, s: &mut Stake) {
 pub mod lvrt_insurance {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>, authority: Pubkey, guardian: Pubkey, engine_signer: Pubkey, lvrt_price_state: Pubkey) -> Result<()> {
+    pub fn initialize(
+        ctx: Context<Initialize>,
+        authority: Pubkey,
+        guardian: Pubkey,
+        engine_signer: Pubkey,
+        lvrt_price_state: Pubkey,
+        fee_router_program: Pubkey,
+    ) -> Result<()> {
         assert_upgrade_authority(&ctx.accounts.program, &ctx.accounts.program_data, &ctx.accounts.payer.key())?;
         let c = &mut ctx.accounts.config;
         c.authority = authority;
@@ -177,6 +188,7 @@ pub mod lvrt_insurance {
         c.lvrt_price_state = lvrt_price_state;
         c.twap_window_s = tr::DEFAULT_TWAP_WINDOW_S;
         c.recovery_discount_bps = tr::DEFAULT_RECOVERY_DISCOUNT_BPS as u16;
+        c.fee_router_program = fee_router_program;
         c.bump = ctx.bumps.config;
         Ok(())
     }
@@ -263,6 +275,30 @@ pub mod lvrt_insurance {
         let f = &mut ctx.accounts.fund;
         f.reward_per_share += amount as u128 * REWARD_PRECISION / f.total_shares as u128;
         f.rewards_unclaimed += amount;
+        Ok(())
+    }
+
+    /// Fee-router-only (CPI signed by the router PDA): `insurance` tops up the
+    /// fund, `stakers` is credited per share. With no stakers the staker share
+    /// joins the fund rather than being stranded. Both were already paid into
+    /// `usdc_vault`.
+    pub fn credit_fees(ctx: Context<CreditFees>, insurance: u64, stakers: u64) -> Result<()> {
+        let a = &ctx.accounts;
+        let (router, _) = Pubkey::find_program_address(&[seeds::ROUTER], &a.config.fee_router_program);
+        require_keys_eq!(a.router_signer.key(), router, InsuranceError::NotFeeRouter);
+        let total = insurance.checked_add(stakers).ok_or(InsuranceError::InvalidParams)?;
+        require!(total > 0, InsuranceError::Noop);
+        let f = &a.fund;
+        // the vault holds the fund balance plus unclaimed staker rewards
+        require!(a.usdc_vault.amount >= f.balance + f.rewards_unclaimed + total, InsuranceError::InvalidParams);
+        let f = &mut ctx.accounts.fund;
+        f.balance += insurance;
+        if f.total_shares > 0 {
+            f.reward_per_share += stakers as u128 * REWARD_PRECISION / f.total_shares as u128;
+            f.rewards_unclaimed += stakers;
+        } else {
+            f.balance += stakers;
+        }
         Ok(())
     }
 
@@ -754,4 +790,16 @@ pub struct ClaimRewards<'info> {
     #[account(mut, address = fund.usdc_vault)]
     pub usdc_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     pub token_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct CreditFees<'info> {
+    /// The fee router signer PDA (checked in the handler).
+    pub router_signer: Signer<'info>,
+    #[account(seeds = [seeds::CONFIG], bump = config.bump)]
+    pub config: Box<Account<'info, InsuranceConfig>>,
+    #[account(mut, seeds = [seeds::INSURANCE, &[fund.bucket.id()]], bump = fund.bump)]
+    pub fund: Box<Account<'info, Fund>>,
+    #[account(address = fund.usdc_vault)]
+    pub usdc_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 }
