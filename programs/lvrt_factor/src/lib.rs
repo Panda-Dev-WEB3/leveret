@@ -145,9 +145,13 @@ pub mod lvrt_factor {
     pub fn publish_level(ctx: Context<PublishLevel>) -> Result<()> {
         let f = &mut ctx.accounts.factor;
         let msgs = verified_messages(&ctx.accounts.instructions.to_account_info())?;
-        let m = msgs.iter().find(|m| m.signer == f.publisher).ok_or(FactorError::MissingSignature)?;
-        let r = FactorReceipt::try_from_slice(&m.message).map_err(|_| FactorError::BadReceipt)?;
-        require!(r.domain == FACTOR_MSG_DOMAIN && r.symbol == f.symbol && r.level > 0, FactorError::BadReceipt);
+        // the publisher may sign several indices in one transaction
+        let r = msgs
+            .iter()
+            .filter(|m| m.signer == f.publisher)
+            .find_map(|m| FactorReceipt::try_from_slice(&m.message).ok().filter(|r| r.domain == FACTOR_MSG_DOMAIN && r.symbol == f.symbol))
+            .ok_or(FactorError::MissingSignature)?;
+        require!(r.level > 0, FactorError::BadReceipt);
         require!(r.methodology_hash == f.methodology_hash, FactorError::WrongMethodology);
         require!(r.snapshot_ts > f.snapshot_ts, FactorError::OutOfOrder);
         f.level = r.level;

@@ -64,9 +64,13 @@ pub fn handle_post_prices<'info>(ctx: Context<'info, PostPrices<'info>>) -> Resu
         if seen & (1 << key.source) != 0 {
             continue; // one sample per source
         }
-        let Some(sm) = msgs.iter().find(|m| m.signer == key.pubkey) else { continue };
-        let m = PriceMsg::decode(&sm.message)?;
-        require!(m.market_id == feed.market_id, OracleError::WrongMarket);
+        // One transaction may carry reports for several markets from the same
+        // signer: use the one for this feed's market.
+        let found = msgs
+            .iter()
+            .filter(|sm| sm.signer == key.pubkey)
+            .find_map(|sm| PriceMsg::decode(&sm.message).ok().filter(|m| m.market_id == feed.market_id).map(|m| (sm, m)));
+        let Some((sm, m)) = found else { continue };
         seen |= 1 << key.source;
         halted |= m.halted;
         if key.source == source::CHAINLINK || key.source == source::ENCLAVE || session.is_none() {

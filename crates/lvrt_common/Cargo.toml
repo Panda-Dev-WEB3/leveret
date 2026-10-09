@@ -10,6 +10,8 @@ name = "lvrt_common"
 
 [features]
 idl-build = ["anchor-lang/idl-build"]
+# Test-cluster build: swaps USDC_MINT for the Leveret test mint.
+devnet = []
 
 [dependencies]
 anchor-lang = "=1.1.2"

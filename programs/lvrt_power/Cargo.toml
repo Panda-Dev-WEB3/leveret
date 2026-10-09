@@ -18,6 +18,7 @@ idl-build = ["anchor-lang/idl-build", "lvrt_common/idl-build", "anchor-spl/idl-b
 anchor-debug = []
 custom-heap = []
 custom-panic = []
+devnet = ["lvrt_common/devnet"]
 
 [dependencies]
 anchor-lang = { version = "=1.1.2", features = ["init-if-needed"] }

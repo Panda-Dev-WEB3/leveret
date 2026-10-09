@@ -8,12 +8,15 @@
 #   scripts/wsl-build.sh             # anchor build
 #   scripts/wsl-build.sh test        # anchor build + cargo test (math + LiteSVM)
 #   scripts/wsl-build.sh check       # cargo check only (fast)
+#   scripts/wsl-build.sh devnet      # test-cluster build (--features devnet) -> target/deploy-devnet
 set -euo pipefail
 
 source "$HOME/lvrt-env.sh" 2>/dev/null || true
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="${LVRT_BUILD_DIR:-$HOME/leveret-build}"
 MODE="${1:-build}"
+# test-cluster binaries get their own build dir so they never mix with mainnet ones
+[ "$MODE" = devnet ] && BUILD="${LVRT_DEVNET_BUILD_DIR:-$HOME/leveret-build-devnet}"
 
 mkdir -p "$BUILD/target/deploy"
 rsync -a --delete \
@@ -39,8 +42,13 @@ case "$MODE" in
       cargo test -p lvrt_tests -- --test-threads=4
     fi
     ;;
+  devnet)
+    anchor build "${@:2}" -- --features devnet
+    mkdir -p "$REPO/target/deploy-devnet"
+    cp target/deploy/*.so "$REPO/target/deploy-devnet/"
+    ;;
   *)
-    echo "usage: $0 [build|test|check]" >&2
+    echo "usage: $0 [build|test|check|devnet]" >&2
     exit 2
     ;;
 esac

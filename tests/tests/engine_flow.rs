@@ -3,7 +3,7 @@
 
 use lvrt_common::{lvrt_math::oracle::source, PriceStatus, Side};
 use lvrt_engine::{FundingState, Position};
-use lvrt_oracle::{PriceState, SignerKind};
+use lvrt_oracle::{FeedParams, PriceState, SignerKind};
 use lvrt_tests::{engine, fixture::*, gov, oracle, *};
 
 #[test]
@@ -85,6 +85,42 @@ fn halt_then_resume_applies_gap_protocol() {
     let ps: PriceState = c.env.account(&oracle::price(SOL));
     assert_eq!(ps.band_bps, 0);
     assert!(!ps.at_open);
+}
+
+/// One transaction may carry reports for several markets from the same
+/// signers (the pusher batches them); each post picks its own market's report.
+#[test]
+fn one_transaction_posts_several_markets_from_the_same_signers() {
+    let mut c = Core::new();
+    oracle::create_feed(
+        &mut c.env,
+        FeedParams {
+            market_id: 2,
+            family: lvrt_common::Family::Core,
+            symbol: [0; 16],
+            allowed_sources: 0b11,
+            min_sources: 2,
+            max_dev_bps: 50,
+            fresh_ms: 800,
+            band_limit_bps: 200,
+            normal_band_bps: 10,
+            chainlink_feed_id: [0; 32],
+            switchboard_feed_id: [0; 32],
+            min_source_depth_usd: 0,
+            measured_source_depth_usd: 0,
+        },
+    );
+    let ts = c.env.now() * 1_000 + 500;
+    let (a1, b1) = (price_msg(SOL, 150 * USD, USD / 100, ts, 0, false), price_msg(SOL, 150 * USD, USD / 100, ts, 0, false));
+    let (a2, b2) = (price_msg(2, 60_000 * USD, USD, ts, 0, false), price_msg(2, 60_000 * USD, USD, ts, 0, false));
+    let mut ixs = oracle::post_ixs(SOL, &[(&c.pusher_a, a1), (&c.pusher_b, b1)]);
+    ixs.extend(oracle::post_ixs(2, &[(&c.pusher_a, a2), (&c.pusher_b, b2)]));
+    let p = c.env.deployer.insecure_clone();
+    c.env.ok(&ixs, &[&p]);
+    let s1: PriceState = c.env.account(&oracle::price(SOL));
+    let s2: PriceState = c.env.account(&oracle::price(2));
+    assert_eq!((s1.mid, s1.status), (150 * USD, PriceStatus::Live));
+    assert_eq!((s2.mid, s2.status), (60_000 * USD, PriceStatus::Live));
 }
 
 #[test]

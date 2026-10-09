@@ -11,7 +11,13 @@ pub mod sigverify;
 
 /// USDC is the only collateral asset (design rule 5). Changing this is a
 /// program upgrade, which itself sits behind the 72h timelock.
+#[cfg(not(feature = "devnet"))]
 pub const USDC_MINT: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+/// Test clusters (localnet / devnet): a test-USDC mint Leveret controls, so the
+/// dev faucet can mint. Build with `--features devnet`; mainnet builds never
+/// include it.
+#[cfg(feature = "devnet")]
+pub const USDC_MINT: Pubkey = pubkey!("H3tRv17bsBR3ccV5cT9nzt66uqm1wn66tT9rmAiAvrfi");
 /// USDT is accepted only as a deposit input and swapped to USDC.
 pub const USDT_MINT: Pubkey = pubkey!("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB");
 pub const USDC_DECIMALS: u8 = 6;

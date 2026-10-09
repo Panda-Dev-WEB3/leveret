@@ -314,9 +314,11 @@ pub mod lvrt_tickets {
             let key: Account<SignerKey> = Account::try_from(key_ai)?;
             require!(key.active, TicketError::BadEvidence);
             let msgs = verified_messages(&a.instructions.to_account_info())?;
-            let sm = msgs.iter().find(|m| m.signer == key.pubkey).ok_or(TicketError::BadEvidence)?;
-            let m = PriceMsg::decode(&sm.message)?;
-            require!(m.market_id == t.market_id, TicketError::BadEvidence);
+            let m = msgs
+                .iter()
+                .filter(|sm| sm.signer == key.pubkey)
+                .find_map(|sm| PriceMsg::decode(&sm.message).ok().filter(|m| m.market_id == t.market_id))
+                .ok_or(TicketError::BadEvidence)?;
             (m.mid, m.ts_ms)
         } else {
             let ps = &a.price_state;
