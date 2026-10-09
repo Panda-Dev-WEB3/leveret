@@ -9,6 +9,7 @@ import {
   type Address,
   type Instruction,
   type KeyPairSigner,
+  signBytes,
 } from "@solana/kit";
 import { getCreateAccountInstruction } from "@solana-program/system";
 import {
@@ -23,6 +24,17 @@ import * as orc from "../src/generated/lvrt_oracle/index.ts";
 import * as vlt from "../src/generated/lvrt_vault/index.ts";
 import * as fee from "../src/generated/lvrt_fee_router/index.ts";
 import * as insIx from "../src/generated/lvrt_insurance/instructions/index.ts";
+import * as tk from "../src/generated/lvrt_tickets/index.ts";
+import * as pw from "../src/generated/lvrt_power/index.ts";
+import { POWER_MARKETS, TICKET_MARKETS } from "../src/data/onchain-products.ts";
+import { NORM_SCALE, PRICE_SCALE, positionValue, powerIndex } from "../src/lib/chain/product-math.ts";
+import {
+  type PriceMsg,
+  type SignedMessage,
+  SESSION,
+  ed25519Instruction,
+  encodePriceMsg,
+} from "../src/lib/chain/price-msg.ts";
 import {
   CUSTODY_COUNT,
   LVRT_MARKET_ID,
@@ -36,15 +48,21 @@ import {
   ENGINE,
   FEE_ROUTER,
   INSURANCE,
+  IX_SYSVAR,
   ORACLE,
+  POWER,
+  SYSTEM_PROGRAM,
+  TICKETS,
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
   VAULT,
   engine,
   insurance,
   oracle,
+  power,
   programData,
   router,
+  tickets,
   vault,
 } from "../src/lib/chain/pdas.ts";
 import {
@@ -56,6 +74,7 @@ import {
   deployerPath,
   rpc,
   send,
+  usd,
   usdc,
 } from "./lib.ts";
 
@@ -71,6 +90,11 @@ const SOURCE = {
 const BUCKETS: BucketName[] = ["Core", "Stocks", "Factors"];
 const BUCKET_MAX_OI = usdc(10_000_000);
 const SEED_LIQUIDITY = usdc(1_000_000);
+/** TICKETS bucket liquidity (the ticket vault pays sell-backs). */
+const TICKET_LIQUIDITY = usdc(500_000);
+/** USDC side of each Squared QuoteAMM; the token side is minted at 220%. */
+const POWER_POOL_USDC = usdc(250_000);
+const POWER_SEED_CR_BPS = 22_000n;
 
 const familyOf: Record<OnchainFamily, eng.Family> = {
   Core: eng.Family.Core,
@@ -180,6 +204,52 @@ async function createMint(
     ],
     payer,
   );
+}
+
+/** `[Ed25519][post_prices]` re-signing the feed's last on-chain mid (or the
+ *  reference price) with a fresh timestamp, for setup steps that need a Live
+ *  price. A newer post already on-chain wins; the program skips older ones. */
+async function freshPrice(id: number, signers: KeyPairSigner[], fallback: number) {
+  const ps = await orc.fetchMaybePriceState(rpc, await oracle.price(id));
+  const mid = ps.exists && ps.data.mid > 0n ? ps.data.mid : usd(fallback);
+  const half = mid / 2_000n;
+  const msg: PriceMsg = {
+    marketId: id,
+    mid,
+    bid: mid - half,
+    ask: mid + half,
+    bandBps: 0,
+    tsMs: BigInt(Date.now() - 1_500),
+    session: SESSION.Regular,
+    halted: false,
+    caFlags: 0,
+  };
+  const message = encodePriceMsg(msg);
+  const sigs: SignedMessage[] = await Promise.all(
+    signers.map(async (k) => ({
+      signer: k.address,
+      message,
+      signature: new Uint8Array(await signBytes(k.keyPair.privateKey, message)),
+    })),
+  );
+  const post = orc.getPostPricesInstruction({
+    feed: await oracle.feed(id),
+    priceState: await oracle.price(id),
+    calendar: await oracle.calendar(),
+    instructions: IX_SYSVAR,
+  });
+  const keys = await Promise.all(
+    sigs.map(async (sg) => ({ address: await oracle.signerKey(sg.signer), role: 0 as const })),
+  );
+  return { ixs: [ed25519Instruction(sigs), { ...post, accounts: [...post.accounts, ...keys] }], mid };
+}
+
+async function balanceOf(token: Address): Promise<bigint> {
+  try {
+    return BigInt((await rpc.getTokenAccountBalance(token, { commitment: "confirmed" }).send()).value.amount);
+  } catch {
+    return 0n;
+  }
 }
 
 async function ata(
@@ -432,6 +502,211 @@ async function main() {
     ],
     "ADL params (operator = deployer)",
   );
+
+  // ------------------------------------------------------------- tickets
+  console.log("Tickets");
+  if (!(await exists(TICKETS))) {
+    console.log("  · skipped: lvrt_tickets is not deployed");
+  } else {
+    const ticketsConfig = await tickets.config();
+    const ticketVault = await tickets.vault();
+    await step(
+      "tickets initialize",
+      await exists(ticketsConfig),
+      async () => [
+        tk.getInitializeInstruction({
+          payer: deployer,
+          config: ticketsConfig,
+          usdcMint: usdcMint.address,
+          vault: ticketVault,
+          program: TICKETS,
+          programData: await programData(TICKETS),
+          tokenProgram: TOKEN_PROGRAM,
+          authority: d,
+          guardian: d,
+        }),
+      ],
+      deployer,
+    );
+    const have = await balanceOf(ticketVault);
+    await step(
+      `tickets vault liquidity (${Number(TICKET_LIQUIDITY) / 1e6} USDC)`,
+      have >= TICKET_LIQUIDITY,
+      async () => [
+        getMintToInstruction({
+          mint: usdcMint.address,
+          token: ticketVault,
+          mintAuthority: deployer,
+          amount: TICKET_LIQUIDITY - have,
+        }),
+      ],
+      deployer,
+    );
+    for (const t of TICKET_MARKETS) {
+      const market = await tickets.market(t.marketId);
+      await step(
+        `ticket market ${t.symbol}`,
+        await exists(market),
+        async () => [
+          tk.getCreateTicketMarketInstruction({
+            payer: deployer,
+            authority: deployer,
+            config: ticketsConfig,
+            market,
+            priceState: await oracle.price(t.marketId),
+            marketId: t.marketId,
+            freshMs: TEST_FRESH_MS,
+            baseRate: 50_000_000_000n, // 5%/yr
+            spreadLong: 20_000_000_000n,
+            spreadShort: 20_000_000_000n,
+            spreadBps: referenceMarkets.find((r) => r.symbol === t.symbol)?.spreadBps ?? 20,
+            halfSpreadBps: 5,
+            gapPremiumBps: 10,
+            gapPremiumOffHoursBps: 50,
+            netCapBps: 10_000,
+            grossCap: usdc(1_000_000),
+          }),
+        ],
+        deployer,
+      );
+    }
+  }
+
+  // ----------------------------------------------------- squared (power)
+  console.log("Squared (lvrt_power)");
+  if (!(await exists(POWER))) {
+    console.log("  · skipped: lvrt_power is not deployed");
+  } else {
+    const powerConfig = await power.config();
+    await step(
+      "power initialize",
+      await exists(powerConfig),
+      async () => [
+        pw.getInitializeInstruction({
+          payer: deployer,
+          config: powerConfig,
+          program: POWER,
+          programData: await programData(POWER),
+          authority: d,
+          guardian: d,
+        }),
+      ],
+      deployer,
+    );
+    for (const p of POWER_MARKETS) {
+      const market = await power.market(p.id);
+      await step(
+        `power market ${p.symbol}`,
+        await exists(market),
+        async () => [
+          pw.getCreatePowerMarketInstruction({
+            payer: deployer,
+            authority: deployer,
+            config: powerConfig,
+            market,
+            priceState: await oracle.price(p.underlyingId),
+            powerMint: await power.mint(p.id),
+            usdcMint: usdcMint.address,
+            usdcVault: await power.usdcVault(p.id),
+            tokenVault: await power.tokenVault(p.id),
+            powerTokenProgram: TOKEN_2022_PROGRAM,
+            usdcTokenProgram: TOKEN_PROGRAM,
+            id: p.id,
+            kind: pw.PowerKind.Squared,
+            priceState2: SYSTEM_PROGRAM,
+          }),
+        ],
+        deployer,
+      );
+      // QuoteAMM inventory: the deployer mints PowerTokens through its own
+      // ShortVault (so every token is backed) and seeds the pool at the index.
+      const m = await pw.fetchPowerMarket(rpc, market);
+      if (m.data.ammTokens > 0n) {
+        console.log(`  · ${p.symbol} AMM seeded (exists)`);
+        continue;
+      }
+      const ref = referenceMarkets.find((r) => r.symbol === p.underlying)?.price ?? 100;
+      const { ixs: priceIxs, mid } = await freshPrice(p.underlyingId, [pusherA, pusherB], ref);
+      const index = powerIndex(mid);
+      const nf = m.data.normFactor;
+      const tokens = (((POWER_POOL_USDC * PRICE_SCALE) / index) * NORM_SCALE) / nf;
+      const usdcIn = positionValue(tokens, nf, index);
+      const collateral = (usdcIn * POWER_SEED_CR_BPS) / 10_000n + 1n;
+      const bal = await balanceOf(deployerUsdc);
+      if (bal < collateral + usdcIn) {
+        await send(
+          deployer,
+          [
+            getMintToInstruction({
+              mint: usdcMint.address,
+              token: deployerUsdc,
+              mintAuthority: deployer,
+              amount: collateral + usdcIn - bal,
+            }),
+          ],
+          `deployer test USDC for the ${p.symbol} seed`,
+        );
+      }
+      const powerMint = await power.mint(p.id);
+      const deployerPower = await ata(d, powerMint, TOKEN_2022_PROGRAM);
+      const shared = {
+        market,
+        priceState: await oracle.price(p.underlyingId),
+        powerMint,
+        usdcMint: usdcMint.address,
+        usdcVault: await power.usdcVault(p.id),
+        powerTokenProgram: TOKEN_2022_PROGRAM,
+        usdcTokenProgram: TOKEN_PROGRAM,
+      };
+      await step(
+        `deployer ${p.symbol} token account`,
+        await exists(deployerPower),
+        async () => [
+          await getCreateAssociatedTokenIdempotentInstructionAsync({
+            payer: deployer,
+            owner: d,
+            mint: powerMint,
+            tokenProgram: TOKEN_2022_PROGRAM,
+          }),
+        ],
+        deployer,
+      );
+      // two signed prices + two Token-2022 instructions exceed one
+      // transaction: mint with the fresh price, then seed against it
+      await send(
+        deployer,
+        [
+          ...priceIxs,
+          pw.getMintShortInstruction({
+            ...shared,
+            owner: deployer,
+            shortVault: await power.shortVault(market, d),
+            ownerPower: deployerPower,
+            ownerUsdc: deployerUsdc,
+            collateralIn: collateral,
+            mintAmount: tokens,
+          }),
+        ],
+        `${p.symbol} seed tokens minted at ${Number(POWER_SEED_CR_BPS) / 100}%`,
+      );
+      await send(
+        deployer,
+        [
+          pw.getSeedAmmInstruction({
+            ...shared,
+            authority: deployer,
+            config: powerConfig,
+            authorityPower: deployerPower,
+            tokenVault: await power.tokenVault(p.id),
+            authorityUsdc: deployerUsdc,
+            usdcIn,
+            tokensIn: tokens,
+          }),
+        ],
+        `${p.symbol} AMM seeded: ${(Number(usdcIn) / 1e6).toLocaleString()} USDC + ${(Number(tokens) / 1e6).toFixed(4)} tokens at ${(Number(index) / 1e8).toFixed(2)} per token`,
+      );
+    }
+  }
 
   // -------------------------------------------------- vault / insurance / router
   console.log("LLP vault, insurance, fee router");

@@ -11,9 +11,12 @@ import type { Address } from '@solana/kit';
 const TOOL_BIT: Record<string, number> = { Core: 0, Stocks: 1, 'Small Caps': 2, Squared: 3, Factors: 4, Tickets: 5, Twins: 6 };
 import { type ConnectedWallet, type WalletChoice, listWallets, onWalletsChanged } from './wallets.ts';
 import { onchainBySymbol } from '../../data/onchain-markets.ts';
+import { powerBySymbol, ticketBySymbol } from '../../data/onchain-products.ts';
+import * as pr from './products.ts';
 import type { SideName } from './pdas.ts';
 
-const MARKETS_EVERY_MS = 2_500;
+// the public devnet RPC rate-limits; poll it less often
+const MARKETS_EVERY_MS = chainConfig?.cluster === 'devnet' ? 6_000 : 2_500;
 const LAST_WALLET = 'leveret.wallet.v1';
 const remember = (name: string | null) => {
   try {
@@ -23,7 +26,7 @@ const remember = (name: string | null) => {
     /* storage unavailable */
   }
 };
-const ACCOUNT_EVERY_MS = 4_000;
+const ACCOUNT_EVERY_MS = chainConfig?.cluster === 'devnet' ? 8_000 : 4_000;
 
 export function useChain() {
   const client = useMemo(() => (chainConfig ? new LeveretClient(chainConfig) : null), []);
@@ -31,6 +34,8 @@ export function useChain() {
   const [wallet, setWallet] = useState<ConnectedWallet | null>(null);
   const [live, setLive] = useState<Map<string, LiveMarket>>(new Map());
   const [account, setAccount] = useState<AccountState | null>(null);
+  const [products, setProducts] = useState<pr.ProductsState>({ power: new Map(), tickets: new Map() });
+  const [holdings, setHoldings] = useState<pr.Holdings>({ power: [], tickets: [] });
   const [busy, setBusy] = useState('');
   const [feedError, setFeedError] = useState('');
   const walletRef = useRef<ConnectedWallet | null>(null);
@@ -61,7 +66,9 @@ export function useChain() {
   const loadMarkets = useCallback(async () => {
     if (!client) return;
     try {
-      setLive(await client.markets());
+      const [m, p] = await Promise.all([client.markets(), pr.productMarkets(client).catch(() => null)]);
+      setLive(m);
+      if (p) setProducts(p);
       setFeedError('');
     } catch (e) {
       setFeedError((e as Error).message);
@@ -70,9 +77,14 @@ export function useChain() {
 
   const loadAccount = useCallback(async () => {
     const w = walletRef.current;
-    if (!client || !w) return setAccount(null);
+    if (!client || !w) {
+      setHoldings({ power: [], tickets: [] });
+      return setAccount(null);
+    }
     try {
-      setAccount(await client.account(w.address));
+      const [a, h] = await Promise.all([client.account(w.address), pr.holdings(client, w.address)]);
+      setAccount(a);
+      setHoldings(h);
     } catch {
       /* keep the last good snapshot */
     }
@@ -117,7 +129,9 @@ export function useChain() {
     account,
     busy,
     feedError,
-    isOnchain: (symbol: string) => !!client && onchainBySymbol.has(symbol),
+    products,
+    holdings,
+    isOnchain: (symbol: string) => !!client && (onchainBySymbol.has(symbol) || products.power.has(symbol) || products.tickets.has(symbol)),
     async connect(choice: WalletChoice) {
       const w = await choice.connect();
       setWallet(w);
@@ -178,7 +192,28 @@ export function useChain() {
       }),
     cancelTrigger: (t: LiveTrigger) => run('Cancelling trigger', async (c, w) => c.send(w, await c.cancelTriggerIxs(w.address, t))),
     close: (p: LivePosition, slippagePct: number) => run('Closing position', async (c, w) => c.send(w, await c.closeIxs(w.address, p, slippagePct))),
+    /** Squared long: buy PowerTokens from the QuoteAMM. */
+    powerBuy: (symbol: string, usdc: number, slippagePct: number) =>
+      run('Buying ' + symbol, async (c, w) => c.sendAll(w, (await pr.powerBuyIxs(c, w.address, need(powerBySymbol.get(symbol), symbol), usdc, slippagePct)).txs)),
+    powerSell: (h: pr.PowerHolding, slippagePct: number) => run('Selling ' + h.product.symbol, async (c, w) => c.sendAll(w, await pr.powerSellIxs(c, w.address, h.product, h.tokens, slippagePct))),
+    /** Squared short: mint against margin + proceeds, sell the tokens. */
+    shortOpen: (symbol: string, marginUsdc: number, slippagePct: number) =>
+      run('Opening ' + symbol + ' short', async (c, w) => {
+        const o = await pr.shortOpenIxs(c, w.address, need(powerBySymbol.get(symbol), symbol), marginUsdc, slippagePct);
+        if ((account?.usdcBalance ?? 0) < o.walletNeeds) throw new Error(`Opening this short moves ${o.walletNeeds.toFixed(2)} USDC from your wallet into the ShortVault (the sale returns most of it). Wallet: ${(account?.usdcBalance ?? 0).toFixed(2)} USDC.`);
+        return c.sendAll(w, o.txs);
+      }),
+    shortClose: (h: pr.PowerHolding, slippagePct: number) =>
+      run('Closing ' + h.product.symbol + ' short', async (c, w) => c.sendAll(w, await pr.shortCloseIxs(c, w.address, h.product, h, account?.usdcBalance ?? 0, slippagePct))),
+    ticketBuy: (symbol: string, a: { side: SideName; budget: number; barrier: number; slippagePct: number }) =>
+      run('Buying ticket', async (c, w) => c.sendAll(w, (await pr.ticketBuyIxs(c, w.address, need(ticketBySymbol.get(symbol), symbol), a)).txs)),
+    ticketSell: (t: pr.LiveTicket, slippagePct: number) => run('Selling ticket back', async (c, w) => c.sendAll(w, await pr.ticketSellIxs(c, w.address, t, slippagePct))),
   };
 }
 
 export type Chain = ReturnType<typeof useChain>;
+
+function need<T>(v: T | undefined, symbol: string): T {
+  if (!v) throw new Error(`${symbol} is not listed on-chain yet.`);
+  return v;
+}

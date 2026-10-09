@@ -317,7 +317,7 @@ export class LeveretClient {
   // -------------------------------------------------------------- builders
 
   /** `[Ed25519 verify] [lvrt_oracle::post_prices]` for a fresh signed quote. */
-  private async priceIxs(marketId: number): Promise<{ ixs: Instruction[]; quote: QuoteJson }> {
+  async priceIxs(marketId: number): Promise<{ ixs: Instruction[]; quote: QuoteJson }> {
     const quote = await this.quote(marketId);
     const sigs = fromQuoteJson(quote);
     const post = orc.getPostPricesInstruction({ feed: await oracle.feed(marketId), priceState: await oracle.price(marketId), calendar: await oracle.calendar(), instructions: IX_SYSVAR });
@@ -438,6 +438,13 @@ export class LeveretClient {
   }
 
   // ------------------------------------------------------------------ send
+
+  /** Send consecutive transactions (one wallet approval each); returns the last signature. */
+  async sendAll(wallet: ConnectedWallet, txs: Instruction[][]): Promise<string> {
+    let sig = '';
+    for (const ixs of txs) sig = await this.send(wallet, ixs);
+    return sig;
+  }
 
   /** Sign with the connected wallet, send, and wait for confirmation. */
   async send(wallet: ConnectedWallet, ixs: Instruction[]): Promise<string> {

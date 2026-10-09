@@ -12,9 +12,9 @@ import {
   createKeyPairSignerFromBytes,
   createSolanaRpcSubscriptions,
   createTransactionMessage,
+  getBase64EncodedWireTransaction,
   getSignatureFromTransaction,
   pipe,
-  sendAndConfirmTransactionFactory,
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
   signTransactionMessageWithSigners,
@@ -34,7 +34,6 @@ export const WS_URL = process.env.LVRT_WS_URL ?? (CLUSTER === 'devnet' ? 'wss://
 
 export const rpc = createRpc(RPC_URL);
 export const rpcSubscriptions = createSolanaRpcSubscriptions(WS_URL);
-const sendAndConfirm = sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions });
 
 /** Load a Solana CLI keypair file (JSON array of 64 bytes). */
 export async function loadSigner(path: string): Promise<KeyPairSigner> {
@@ -63,7 +62,8 @@ export async function exists(a: Address): Promise<boolean> {
   return value !== null;
 }
 
-/** Build, sign (fee payer + every signer attached to the instructions) and confirm. */
+/** Build, sign (fee payer + every signer attached to the instructions), send
+ *  and confirm by polling (public devnet WebSockets drop often). */
 export async function send(feePayer: TransactionSigner, ixs: Instruction[], label = ''): Promise<string> {
   const { value: blockhash } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
   const msg = pipe(
@@ -73,14 +73,23 @@ export async function send(feePayer: TransactionSigner, ixs: Instruction[], labe
     (m) => appendTransactionMessageInstructions(ixs, m),
   );
   const tx = await signTransactionMessageWithSigners(msg);
+  const sig = getSignatureFromTransaction(tx);
+  const wire = getBase64EncodedWireTransaction(tx);
   try {
-    await sendAndConfirm(tx as Parameters<typeof sendAndConfirm>[0], { commitment: 'confirmed' });
+    await rpc.sendTransaction(wire, { encoding: 'base64', preflightCommitment: 'confirmed' }).send();
+    let done = false;
+    for (let i = 0; i < 90 && !done; i++) {
+      const s = (await rpc.getSignatureStatuses([sig]).send()).value[0];
+      if (s?.err) throw new Error(`failed on-chain: ${JSON.stringify(s.err, (_, v) => (typeof v === 'bigint' ? v.toString() : v))}`);
+      done = s?.confirmationStatus === 'confirmed' || s?.confirmationStatus === 'finalized';
+      if (!done) await sleep(500);
+    }
+    if (!done) throw new Error('not confirmed in 45 s');
   } catch (e) {
     const logs = (e as { context?: { logs?: string[] }; cause?: { context?: { logs?: string[] } } });
     const lines = logs.context?.logs ?? logs.cause?.context?.logs ?? [];
     throw new Error(`${label || 'transaction'} failed: ${(e as Error).message}\n${lines.join('\n')}`);
   }
-  const sig = getSignatureFromTransaction(tx);
   if (label) console.log(`  ✓ ${label}`);
   return sig;
 }

@@ -12,7 +12,7 @@ const idlDir = resolve(here, '../../target/idl');
 const outRoot = resolve(here, '../src/generated');
 
 // Programs the website talks to.
-const programs = ['lvrt_engine', 'lvrt_oracle', 'lvrt_vault', 'lvrt_tickets', 'lvrt_insurance', 'lvrt_fee_router'];
+const programs = ['lvrt_engine', 'lvrt_oracle', 'lvrt_vault', 'lvrt_tickets', 'lvrt_insurance', 'lvrt_fee_router', 'lvrt_power'];
 // lvrt_insurance has both a `Stake` account and a `stake` instruction, whose
 // discriminator constants collide in the barrel file; import its sub-modules.
 const dropBarrel = new Set(['lvrt_insurance']);

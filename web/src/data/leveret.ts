@@ -22,12 +22,14 @@ export const markets:Market[]=[
  {symbol:'COIN',name:'Coinbase',family:'Stocks',price:341.62,change:2.89,maxLeverage:10,session:'24/5',color:'#98b8c7',spreadBps:12,carry:.018},
  {symbol:'NVDA²',name:'NVIDIA Squared',family:'Squared',price:335.73,change:4.98,maxLeverage:2,session:'24/5',color:'#ddbd8f',spreadBps:10,carry:.15},
  {symbol:'SPY²',name:'S&P 500 Squared',family:'Squared',price:452.67,change:1.44,maxLeverage:2,session:'24/5',color:'#dbbbaa',spreadBps:10,carry:.13},
+ {symbol:'SOL²',name:'Solana Squared',family:'Squared',price:426.09,change:6.67,maxLeverage:2,session:'24/7',color:'#cfc49a',spreadBps:10,carry:.16},
  {symbol:'NVDA/AMD',name:'NVIDIA / AMD',family:'Squared',price:1.16,change:.85,maxLeverage:5,session:'24/5',color:'#d7c594',spreadBps:10,carry:.08},
  {symbol:'TRND',name:'Trend basket',family:'Factors',price:124.68,change:.93,maxLeverage:5,session:'24/5',color:'#c4bd82',spreadBps:10,carry:.025},
  {symbol:'STDY',name:'Low volatility',family:'Factors',price:108.32,change:.32,maxLeverage:5,session:'24/5',color:'#a1bba0',spreadBps:10,carry:.022},
  {symbol:'AIB',name:'AI beta basket',family:'Factors',price:156.87,change:2.32,maxLeverage:5,session:'24/5',color:'#d3b18c',spreadBps:10,carry:.03},
  {symbol:'QLTY',name:'Quality basket',family:'Factors',price:118.44,change:.41,maxLeverage:5,session:'24/5',color:'#b7c4ac',spreadBps:10,carry:.018},
  {symbol:'NVDA-T',name:'NVIDIA knock-out',family:'Tickets',price:183.23,change:2.46,maxLeverage:10,session:'Regular hours',color:'#d9c099',spreadBps:30,carry:.02},
+ {symbol:'SOL-T',name:'Solana knock-out',family:'Tickets',price:206.42,change:3.28,maxLeverage:10,session:'24/7',color:'#c8c48f',spreadBps:20,carry:.02},
  {symbol:'lNVDA',name:'NVIDIA Twin',family:'Twins',price:183.23,change:2.46,maxLeverage:1,session:'24/5',color:'#a9c58a',spreadBps:10,carry:.015},
  {symbol:'lSPY',name:'S&P 500 Twin',family:'Twins',price:672.81,change:.72,maxLeverage:1,session:'24/5',color:'#d0c491',spreadBps:10,carry:.011}
 ];

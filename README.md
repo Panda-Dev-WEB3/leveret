@@ -65,8 +65,16 @@ IDLs (`npm run codegen` → `web/src/generated/`):
   triggers (placed after the open, listed and cancellable in Orders), agent
   policies as on-chain engine delegates (authorize / revoke / revoke-all kill
   switch; withdraw permission never set), test-USDC faucet on test clusters.
-- Families not on-chain yet (Squared, Tickets, Twins, Small Caps) and limit
-  orders keep the original prepare-a-draft flow, labelled as such.
+- **Squared** (`lvrt_power`): live index value per PowerToken (S² × nf) and
+  on-chain daily carry. Long = buy PowerTokens from the QuoteAMM inside the
+  oracle band, sell back from the positions table. Short = mint in a
+  ShortVault against margin plus the sale proceeds (~205% of debt) and sell
+  the tokens; close buys the debt back, burns it and returns the collateral.
+- **Tickets** (`lvrt_tickets`): budget-capped buy (the price paid, never more
+  than the budget, is the maximum loss) at a chosen knock-out level; holdings
+  show the rolled barrier, live value and leverage; sell back in session.
+- Twins, Small Caps, ratio markets (NVDA/AMD) and limit orders keep the
+  original prepare-a-draft flow, labelled as such.
 
 Without `NEXT_PUBLIC_CLUSTER` it stays the offline reference dashboard.
 
@@ -95,26 +103,37 @@ scripts/wsl-build.sh devnet                  # -> target/deploy-devnet
 scripts/localnet.sh                          # validator with all 10 programs, upgradeable
 # on Windows / anywhere with Node >= 24
 LVRT_CLUSTER=localnet node web/dev/bootstrap.ts   # idempotent: mints, feeds, markets, shards, LLP…
-LVRT_CLUSTER=localnet node web/dev/oracle.ts      # signed quotes + faucet + push/merge + TP/SL keeper
+LVRT_CLUSTER=localnet node web/dev/oracle.ts      # quotes, faucet, push/merge, TP/SL + knock-out keepers, AMM arb
 LVRT_CLUSTER=localnet node web/dev/e2e.ts         # headless deposit → open → close → withdraw
+LVRT_CLUSTER=localnet node web/dev/e2e-products.ts  # SOL² long + short round trips, SOL-T buy → sell back
 ```
 
 `web/dev/oracle.ts` stands in for the oracle-pusher, merge-cranker and
 trigger-exec services on test clusters: it random-walks prices from the
 dashboard's reference values, signs them with the registered pusher / enclave
 keys, serves `GET /quotes`, `GET /quote/<id>`, `POST /faucet`, posts every feed
-on-chain and merges shards periodically, and executes TP/SL triggers. Test
+on-chain and merges shards periodically, executes TP/SL triggers, knocks out
+tickets with signed evidence, and arbitrages the Squared QuoteAMMs back to
+their index (the index moves ~2× the underlying, so an unattended pool leaves
+its ±1% band within the hour; the arb mints through its own ShortVault at
+220% or buys and burns, like a real arbitrageur would). Test
 clusters use a 60 s quote freshness window (mainnet: 800 ms / 2 s) because
 wallets take seconds to approve and devnet can't afford a sub-second pusher.
 
 **Devnet status:** `lvrt_oracle`, `lvrt_engine`, `lvrt_vault`,
-`lvrt_insurance` and `lvrt_fee_router` are deployed (upgrade authority
-`2FmzTtbkyfsrqgZ6jhLaTYmKVSyLQvzH52tR76MQzukG`) and bootstrapped: all 13
-markets, and the Core / Stocks / Factors LLP buckets (seeded with test USDC),
-insurance funds and fee inboxes. Trading, deposits and withdrawals work end to
-end. Deploying costs the program's rent only: the write buffer is folded into
+`lvrt_insurance`, `lvrt_fee_router`, `lvrt_power` and `lvrt_tickets` are
+deployed (upgrade authority `2FmzTtbkyfsrqgZ6jhLaTYmKVSyLQvzH52tR76MQzukG`)
+and bootstrapped: all 13 markets; the Core / Stocks / Factors LLP buckets
+(seeded with test USDC), insurance funds and fee inboxes; NVDA², SPY² and
+SOL² QuoteAMMs seeded with 250k test USDC each against ShortVault-backed
+tokens; NVDA-T and SOL-T ticket markets on a 500k vault. Trading, deposits,
+withdrawals, Squared longs and shorts and tickets work end to end (stock
+underlyings are Closed at weekends, so use SOL² / SOL-T then). Squared
+transactions are split in two or three when two signed prices plus two
+Token-2022 instructions would exceed 1,232 bytes. Deploying costs the program's rent only: the write buffer is folded into
 the program account. The public devnet RPC rate-limits bursts; the client
-retries HTTP 429 with backoff (`web/src/lib/chain/rpc.ts`).
+retries HTTP 429 with backoff (`web/src/lib/chain/rpc.ts`), and the dashboard
+and dev keepers poll devnet less often than localnet.
 
 ## Build and test
 
@@ -132,10 +151,10 @@ crate also runs natively on Windows: `cargo test -p lvrt_math`.
 
 ## What the tests cover
 
-`lvrt_math` (54 unit tests) — including the §14 fixture *a power-market
+`lvrt_math` (56 unit tests) — including the §14 fixture *a power-market
 split keeps every long's value unchanged to 1e-9* (4:1, 1:10, 3:2).
 
-LiteSVM integration (`tests/tests/*.rs`, 34 tests):
+LiteSVM integration (`tests/tests/*.rs`, 38 tests):
 
 | Test | Spec rule |
 |---|---|
@@ -173,6 +192,9 @@ LiteSVM integration (`tests/tests/*.rs`, 34 tests):
 | `late_crossing_report_knocks_the_ticket_out` | §14 fixture |
 | `buy_prices_the_ticket_and_enforces_distance` | §9 price, 3% minimum distance |
 | `evidence_from_before_issue_is_rejected` | §9 knock-out evidence window |
+| `shorts_seed_the_amm_and_longs_round_trip_inside_the_band` | §7 ShortVault-backed seed (mispriced seed refused), AMM buy, slippage, sell at the floor after an index move |
+| `buys_above_the_band_route_to_the_short_vault` | §7 buys over `I(1 + b)` refused |
+| `short_vault_mints_at_200_and_burns_back_to_zero` | §7 200% mint, 150% maintenance on withdraw, full burn |
 
 ## Status per program
 
@@ -184,7 +206,7 @@ LiteSVM integration (`tests/tests/*.rs`, 34 tests):
 | vault | buckets, LP mint, NAV deposit/redeem ±5 bps, dead shares, 48h queue, engine-only exposure report + settlement, slash receivable in NAV, insurance-only recovery collection | composite LLP router, hedge-router authority |
 | insurance | funds, targets, contributions, engine-only shortfall cover, share-based staked tranche, TWAP crank, pro-rata slashing into escrow, recovery sales, 14-day unstake, reward claims | — |
 | fee_router | per-bucket fee inbox PDAs, 80/10/5/5 split, optional oracle-operator share, ledger CPIs into vault + insurance | buy-and-burn |
-| power | index, normFactor accrual, daily carry, ShortVault mint/burn at 200%/150%, AMM buy inside band, split | AMM sell, batch liquidations, Crab, `redeem_at_index`, Token-2022 metadata |
+| power | index, normFactor accrual, daily carry, ShortVault mint/burn at 200%/150%, QuoteAMM buy / sell inside the band, authority `seed_amm` with ShortVault-backed tokens, split | batch liquidations, Crab (and routing sells to Crab redeem when the AMM's USDC side is empty), `redeem_at_index`, Token-2022 metadata, AMM inventory withdrawal |
 | factor | registry, signed publishes (methodology hash checked), liveness pause, 30-day methodology change, guardian pause | factor perps trade on the engine via an oracle feed signed by the same enclave key |
 | tickets | buy with distance/caps/stress budget, sell-back (session only), knock-out by live or late signed evidence, transfer, gifts | split handling, routing liquidity through `lvrt_vault` |
 | twins | vault state, Token-2022 mint, solvency view | Scaled UI Amount mint, engine CPIs for mint/redeem, multiplier steps |
@@ -248,6 +270,14 @@ part of this pass.
   positions and isn't attempted. A bucket can list ~17 markets before ADL
   needs v0 transactions with lookup tables.
 - **Tickets keep their own USDC vault** for the TICKETS bucket for now.
+- **QuoteAMM pricing.** Trades run on the constant-product curve but never
+  fill under `I(1 − b)`: a sell gets at least the floor (paid from the AMM's
+  USDC, per the spec), and a buy against a pool quoting under the band fills
+  at the floor too, so inventory can't be bought cheap and sold back at the
+  floor. Buys that would pay over `I(1 + b)` are refused (route to ShortVault
+  mint). AMM inventory comes from `seed_amm` (timelock authority): USDC plus
+  PowerTokens the authority minted through its own ShortVault, so every token
+  stays backed; the pool's mark must sit inside the band after a seed.
 - **Corporate actions** are declared by a `ca_operator` key while the oracle
   holds the market in `CA_PENDING`; positions are rescaled lazily per account.
 - Spec items marked (U) — Switchboard instruction layout, SIMD-0296 v1

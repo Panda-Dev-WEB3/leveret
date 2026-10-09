@@ -5,11 +5,13 @@ import { LVRT_ENGINE_PROGRAM_ADDRESS } from '../../generated/lvrt_engine/index.t
 import { LVRT_ORACLE_PROGRAM_ADDRESS } from '../../generated/lvrt_oracle/index.ts';
 import { LVRT_VAULT_PROGRAM_ADDRESS } from '../../generated/lvrt_vault/index.ts';
 import { LVRT_TICKETS_PROGRAM_ADDRESS } from '../../generated/lvrt_tickets/index.ts';
+import { LVRT_POWER_PROGRAM_ADDRESS } from '../../generated/lvrt_power/index.ts';
 
 export const ENGINE = LVRT_ENGINE_PROGRAM_ADDRESS;
 export const ORACLE = LVRT_ORACLE_PROGRAM_ADDRESS;
 export const VAULT = LVRT_VAULT_PROGRAM_ADDRESS;
 export const TICKETS = LVRT_TICKETS_PROGRAM_ADDRESS;
+export const POWER = LVRT_POWER_PROGRAM_ADDRESS;
 export const INSURANCE = 'DwkxsoEc8sQBBqBovGsHBDvrmomdcPqy9aK2zFcUZxhQ' as Address;
 export const FEE_ROUTER = 'GxQSsXZi4uYAieZWyMBvk8c7dBbkKUQWJ5CoHKUHUeQF' as Address;
 export const GOV = '2CvejCR36zZzmKgtBBP6G9jpVQCwwZ1AUe355t1Bci2E' as Address;
@@ -91,6 +93,15 @@ export const tickets = {
   vault: () => pda(TICKETS, [text('custody')]),
   market: (id: number) => pda(TICKETS, [text('mkt'), u32(id)]),
   ticket: (owner: Address, nonce: bigint) => pda(TICKETS, [text('ticket'), addr(owner), u64(nonce)]),
+};
+
+export const power = {
+  config: () => pda(POWER, [text('config')]),
+  market: (id: number) => pda(POWER, [text('power'), u32(id)]),
+  mint: (id: number) => pda(POWER, [text('power_mint'), u32(id)]),
+  usdcVault: (id: number) => pda(POWER, [text('custody'), u32(id)]),
+  tokenVault: (id: number) => pda(POWER, [text('power'), text('amm'), u32(id)]),
+  shortVault: (market: Address, owner: Address) => pda(POWER, [text('short'), addr(market), addr(owner)]),
 };
 
 /** `shard_for` from lvrt_math: FNV-1a over the margin account's 32 bytes, mod `shards`. */

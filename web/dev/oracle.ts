@@ -2,7 +2,9 @@
 // service (Backend §13): signs PriceMsg reports with the registered pusher /
 // enclave keys, serves them to the dashboard (which embeds them in its own
 // transactions), periodically posts them on-chain, and runs the shard-merge
-// crank. Also a test-USDC faucet.
+// crank, the TP/SL keeper, the ticket knock-out keeper and a QuoteAMM
+// arbitrageur that keeps the Squared pools on their index. Also a test-USDC
+// faucet.
 //
 //   LVRT_CLUSTER=localnet node web/dev/oracle.ts      # http://127.0.0.1:8787
 //
@@ -19,9 +21,13 @@ import {
 } from '@solana-program/token';
 import * as eng from '../src/generated/lvrt_engine/index.ts';
 import * as orc from '../src/generated/lvrt_oracle/index.ts';
+import * as pw from '../src/generated/lvrt_power/index.ts';
+import * as tk from '../src/generated/lvrt_tickets/index.ts';
+import { POWER_MARKETS, type PowerProduct } from '../src/data/onchain-products.ts';
+import { AMM_BAND_SESSION_BPS, ammSell, barrierOn, effectiveIndex, isKnockedOut, positionValue, powerIndex, usdcForTokens } from '../src/lib/chain/product-math.ts';
 import { LVRT_MARKET_ID, ONCHAIN_MARKETS, SHARDS } from '../src/data/onchain-markets.ts';
 import { markets as referenceMarkets } from '../src/data/leveret.ts';
-import { ENGINE, IX_SYSVAR, TOKEN_PROGRAM, engine, oracle, shardFor } from '../src/lib/chain/pdas.ts';
+import { ENGINE, IX_SYSVAR, TICKETS, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, engine, oracle, power, shardFor, tickets } from '../src/lib/chain/pdas.ts';
 import { SESSION, type PriceMsg, type SignedMessage, ed25519Instruction, encodePriceMsg, toQuoteJson, type QuoteJson } from '../src/lib/chain/price-msg.ts';
 import { CLUSTER, KEYS, deployerPath, devKey, loadSigner, rpc, rpcSubscriptions, send, sleep, usdc } from './lib.ts';
 
@@ -103,7 +109,8 @@ async function pushLoop(payer: KeyPairSigner) {
 
 /** Trigger keeper (Backend §13 trigger-exec): run TP/SL through the engine's
  *  fill path when the signed quote crosses the trigger price. */
-const KEEPER_EVERY_MS = 3_000;
+// public devnet RPC rate-limits getProgramAccounts scans hard
+const KEEPER_EVERY_MS = CLUSTER === 'devnet' ? 15_000 : 3_000;
 const inFlight = new Set<string>();
 
 async function keeperLoop(keeper: KeyPairSigner) {
@@ -165,6 +172,137 @@ async function keeperLoop(keeper: KeyPairSigner) {
   }
 }
 
+/** Ticket knock-out keeper (§9): any signed report crossing the barrier, as
+ *  of its own day, knocks the ticket out; it is submitted as Ed25519 evidence
+ *  so a late report still counts. */
+const KNOCK_OUT_EVERY_MS = CLUSTER === 'devnet' ? 15_000 : 5_000;
+
+async function knockOutLoop(keeper: KeyPairSigner, evidenceKey: Address) {
+  const dec = tk.getTicketDecoder();
+  const disc = getBase58Decoder().decode(tk.TICKET_DISCRIMINATOR);
+  for (;;) {
+    try {
+      const res = await rpc
+        .getProgramAccounts(TICKETS, { encoding: 'base64', commitment: 'confirmed', filters: [{ memcmp: { offset: 0n, bytes: disc as never, encoding: 'base58' } }] })
+        .send();
+      for (const { pubkey, account } of res) {
+        if (inFlight.has(pubkey)) continue;
+        const t = dec.decode(getBase64Encoder().encode(account.data[0]));
+        const q = latest.get(t.marketId);
+        if (!q || q.msg.tsMs < t.issuedAt * 1000n) continue;
+        const side = t.side === tk.Side.Long ? 'Long' : 'Short';
+        const f = barrierOn(t.fInitial, t.rate, t.issuedAt, q.msg.tsMs / 86_400_000n);
+        if (!isKnockedOut(side, q.msg.mid, f)) continue;
+        const sig = q.sigs.find((x) => x.signer === evidenceKey) ?? q.sigs[0];
+        inFlight.add(pubkey);
+        try {
+          const ix = tk.getKnockOutInstruction({ market: await tickets.market(t.marketId), priceState: await oracle.price(t.marketId), ticket: pubkey, owner: t.owner, instructions: IX_SYSVAR });
+          await send(keeper, [ed25519Instruction([sig]), { ...ix, accounts: [...ix.accounts, { address: await oracle.signerKey(sig.signer), role: 0 as const }] }]);
+          console.log(`[knock-out] ${side} ticket on market ${t.marketId}: ${(Number(q.msg.mid) / 1e8).toFixed(2)} crossed ${(Number(f) / 1e8).toFixed(2)}`);
+        } catch (e) {
+          console.error('[knock-out]', (e as Error).message.split(String.fromCharCode(10)).slice(0, 8).join(String.fromCharCode(10)));
+        } finally {
+          inFlight.delete(pubkey);
+        }
+      }
+    } catch (e) {
+      console.error('[knock-out scan]', (e as Error).message);
+    }
+    await sleep(KNOCK_OUT_EVERY_MS);
+  }
+}
+
+/** QuoteAMM arbitrageur. The index moves ~2× the underlying, so without
+ *  arbitrage a pool drifts out of its ±1% band (buys above it are refused).
+ *  Like a real arb it trades the pool back to the index along its own curve:
+ *  buying (then burning the tokens against its ShortVault) when the pool is
+ *  cheap, minting (≥ 220%) and selling when it is expensive. */
+const ARB_EVERY_MS = CLUSTER === 'devnet' ? 60_000 : 10_000;
+const ARB_TRIGGER_BPS = 30n;
+const ARB_MINT_CR_BPS = 22_000n;
+
+async function arbLoop(mm: KeyPairSigner, usdcMint: Address) {
+  for (;;) {
+    for (const p of POWER_MARKETS) {
+      try {
+        await arb(mm, usdcMint, p);
+      } catch (e) {
+        console.error(`[amm ${p.symbol}]`, (e as Error).message.split(String.fromCharCode(10)).slice(0, 6).join(String.fromCharCode(10)));
+      }
+    }
+    await sleep(ARB_EVERY_MS);
+  }
+}
+
+async function tokenBalance(a: Address): Promise<bigint> {
+  try {
+    return BigInt((await rpc.getTokenAccountBalance(a, { commitment: 'confirmed' }).send()).value.amount);
+  } catch {
+    return 0n;
+  }
+}
+
+async function arb(mm: KeyPairSigner, usdcMint: Address, p: PowerProduct) {
+  const q = latest.get(p.underlyingId);
+  const market = await power.market(p.id);
+  const m = await pw.fetchMaybePowerMarket(rpc, market, { commitment: 'confirmed' });
+  if (!q || !m.exists || m.data.ammTokens === 0n) return;
+  const { ammUsdc: x, ammTokens: y, normFactor: nf } = m.data;
+  const index = powerIndex(q.msg.mid);
+  const off = ((effectiveIndex(x, y, nf) - index) * 10_000n) / index;
+  if (off < ARB_TRIGGER_BPS && off > -ARB_TRIGGER_BPS) return;
+
+  // same k, reserves priced at the index: x'/y' = USDC per token
+  const perToken = Number(positionValue(1_000_000n, nf, index)) / 1e6;
+  const k = Number(x) * Number(y);
+  const yTarget = BigInt(Math.floor(Math.sqrt(k / perToken)));
+  const mint = await power.mint(p.id);
+  const [mmPower] = await findAssociatedTokenPda({ owner: mm.address, mint, tokenProgram: TOKEN_2022_PROGRAM });
+  const [mmUsdc] = await findAssociatedTokenPda({ owner: mm.address, mint: usdcMint, tokenProgram: TOKEN_PROGRAM });
+  const accts = {
+    market,
+    priceState: await oracle.price(p.underlyingId),
+    powerMint: mint,
+    usdcMint,
+    usdcVault: await power.usdcVault(p.id),
+    powerTokenProgram: TOKEN_2022_PROGRAM,
+    usdcTokenProgram: TOKEN_PROGRAM,
+  };
+  const trade = { ...accts, user: mm, userPower: mmPower, tokenVault: await power.tokenVault(p.id), userUsdc: mmUsdc };
+  const short = { ...accts, owner: mm, shortVault: await power.shortVault(market, mm.address), ownerPower: mmPower, ownerUsdc: mmUsdc };
+  const post = orc.getPostPricesInstruction({ feed: await oracle.feed(p.underlyingId), priceState: await oracle.price(p.underlyingId), calendar: await oracle.calendar(), instructions: IX_SYSVAR });
+  const keys = await Promise.all(q.sigs.map(async (sg) => ({ address: await oracle.signerKey(sg.signer), role: 0 as const })));
+  const priced = [ed25519Instruction(q.sigs), { ...post, accounts: [...post.accounts, ...keys] }];
+  const topUp = async (amount: bigint) => ((await tokenBalance(mmUsdc)) < amount ? [getMintToInstruction({ mint: usdcMint, token: mmUsdc, mintAuthority: mm, amount: amount * 2n })] : []);
+
+  if (yTarget < y) {
+    // pool cheap: buy tokens back, burn them against the arb's own short
+    const want = y - yTarget;
+    const usdcIn = usdcForTokens(x, y, want, nf, index, AMM_BAND_SESSION_BPS);
+    if (usdcIn === null) return;
+    await send(mm, [...(await topUp(usdcIn)), ...priced, pw.getAmmBuyInstruction({ ...trade, usdcIn, minTokensOut: (want * 99n) / 100n })]);
+    const v = await pw.fetchMaybeShortVault(rpc, short.shortVault, { commitment: 'confirmed' });
+    const burn = [await tokenBalance(mmPower), v.exists ? v.data.minted : 0n].reduce((a, b) => (a < b ? a : b));
+    if (burn > 0n) await send(mm, [pw.getBurnShortInstruction({ ...short, burnAmount: burn, collateralOut: 0n })]);
+    console.log(`[amm ${p.symbol}] pool ${Number(off)} bps under the index: bought ${(Number(want) / 1e6).toFixed(4)} tokens, burned ${(Number(burn) / 1e6).toFixed(4)}`);
+  } else {
+    // pool expensive: mint what the wallet doesn't hold (≥ 220%) and sell
+    const want = yTarget - y;
+    const held = await tokenBalance(mmPower);
+    const out = ammSell(x, y, want, nf, index, AMM_BAND_SESSION_BPS);
+    if (out === null) return;
+    if (held < want) {
+      const mintAmount = want - held;
+      const collateral = (positionValue(mintAmount, nf, index) * ARB_MINT_CR_BPS) / 10_000n + 1n;
+      await send(mm, [...(await topUp(collateral)), ...priced, pw.getMintShortInstruction({ ...short, collateralIn: collateral, mintAmount })]);
+      await send(mm, [pw.getAmmSellInstruction({ ...trade, tokensIn: want, minUsdcOut: (out * 99n) / 100n })]);
+    } else {
+      await send(mm, [...priced, pw.getAmmSellInstruction({ ...trade, tokensIn: want, minUsdcOut: (out * 99n) / 100n })]);
+    }
+    console.log(`[amm ${p.symbol}] pool ${Number(off)} bps over the index: sold ${(Number(want) / 1e6).toFixed(4)} tokens`);
+  }
+}
+
 const lastFaucet = new Map<string, number>();
 async function faucet(deployer: KeyPairSigner, usdcMint: Address, owner: Address) {
   const now = Date.now();
@@ -183,10 +321,21 @@ async function main() {
   const deployer = await loadSigner(deployerPath());
   const usdcMint = (await loadSigner(resolve(KEYS, 'test-usdc-mint.json'))).address;
   const [pusherA, pusherB, enclave] = await Promise.all([devKey('dev-pusher-a'), devKey('dev-pusher-b'), devKey('dev-enclave')]);
+  // continue the walk from what is on-chain, so a restart doesn't jump prices
+  try {
+    const states = await orc.fetchAllMaybePriceState(rpc, await Promise.all(feeds.map((f) => oracle.price(f.id))));
+    states.forEach((ps, i) => {
+      if (ps.exists && ps.data.mid > 0n) feeds[i].price = Number(ps.data.mid) / 1e8;
+    });
+  } catch (e) {
+    console.error('[start] on-chain prices unavailable, walking from reference prices:', (e as Error).message.split(String.fromCharCode(10))[0]);
+  }
   await tick(pusherA, pusherB, enclave);
   setInterval(() => tick(pusherA, pusherB, enclave).catch((e) => console.error('[tick]', e)), TICK_MS);
   void pushLoop(deployer);
   void keeperLoop(deployer).catch((e) => console.error('[keeper] stopped:', e));
+  if ((await rpc.getAccountInfo(TICKETS, { encoding: 'base64' }).send()).value) void knockOutLoop(deployer, pusherA.address);
+  if ((await rpc.getAccountInfo(await power.config(), { encoding: 'base64' }).send()).value) void arbLoop(deployer, usdcMint);
 
   const json = (res: import('node:http').ServerResponse, status: number, body: unknown) => {
     res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'cache-control': 'no-store' });
