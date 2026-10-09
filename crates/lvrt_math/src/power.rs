@@ -87,28 +87,68 @@ pub fn amm_band(index: i64, band_bps: i64) -> MathResult<(i64, i64)> {
     Ok((to_i64(index as i128 - d)?, to_i64(index as i128 + d)?))
 }
 
-/// Constant-product buy of `usdc_in` against reserves, returning tokens out,
-/// or `None` when the post-trade price would leave the oracle band.
+/// Constant-product buy of `usdc_in` (10 bps fee) against reserves, returning
+/// tokens out, or `None` when the price paid would be above `I(1 + b)` (route
+/// to ShortVault mint) or the pool can't fill. A pool quoting below `I(1 − b)`
+/// fills at `I(1 − b)`: nothing leaves the AMM under the band, so its
+/// inventory can't be bought cheap and sold back at the floor.
 pub fn amm_buy(usdc_reserve: u64, token_reserve: u64, usdc_in: u64, nf: i128, index: i64, band_bps: i64) -> MathResult<Option<u64>> {
-    if usdc_reserve == 0 || token_reserve == 0 {
+    if usdc_reserve == 0 || token_reserve == 0 || usdc_in == 0 {
         return Ok(None);
     }
     let fee = apply_bps_up(usdc_in as i128, AMM_FEE_BPS)?;
     let net = usdc_in as i128 - fee;
     let k = usdc_reserve as i128 * token_reserve as i128;
-    let new_usdc = usdc_reserve as i128 + net;
-    let new_tok = k / new_usdc;
-    let out = token_reserve as i128 - new_tok;
-    if out <= 0 {
+    let new_tok = div_up(k, usdc_reserve as i128 + net)?;
+    let curve = token_reserve as i128 - new_tok;
+    if curve <= 0 {
         return Ok(None);
     }
     // effective per-token-unit price in index terms: usdc / (tokens × nf)
-    let eff = effective_index(net, out, nf)?;
-    let (_, hi) = amm_band(index, band_bps)?;
+    let eff = effective_index(net, curve, nf)?;
+    let (lo, hi) = amm_band(index, band_bps)?;
     if eff > hi as i128 {
         return Ok(None);
     }
+    let out = if eff < lo as i128 { tokens_at(net, lo, nf)? } else { curve };
+    if out <= 0 || out >= token_reserve as i128 {
+        return Ok(None);
+    }
     Ok(Some(out as u64))
+}
+
+/// Constant-product sell of `tokens_in`, returning USDC out after the 10 bps
+/// fee. Always fills at `≥ I(1 − b)` (the floor, paid from the AMM's USDC);
+/// `None` when the AMM's USDC side can't cover it (route to Crab redeem).
+pub fn amm_sell(usdc_reserve: u64, token_reserve: u64, tokens_in: u64, nf: i128, index: i64, band_bps: i64) -> MathResult<Option<u64>> {
+    if usdc_reserve == 0 || token_reserve == 0 || tokens_in == 0 {
+        return Ok(None);
+    }
+    let k = usdc_reserve as i128 * token_reserve as i128;
+    let new_usdc = div_up(k, token_reserve as i128 + tokens_in as i128)?;
+    let curve = usdc_reserve as i128 - new_usdc;
+    let (lo, _) = amm_band(index, band_bps)?;
+    let floor = usdc_at(tokens_in as i128, lo, nf)?;
+    let gross = curve.max(floor);
+    let out = gross - apply_bps_up(gross, AMM_FEE_BPS)?;
+    if out <= 0 || gross >= usdc_reserve as i128 {
+        return Ok(None);
+    }
+    Ok(Some(out as u64))
+}
+
+/// Tokens bought by `usdc` at index-equivalent price `price` (rounds down).
+fn tokens_at(usdc: i128, price: i64, nf: i128) -> MathResult<i128> {
+    mul_div(mul_div(usdc, PRICE_SCALE as i128, price as i128)?, NORM_SCALE, nf)
+}
+
+/// USDC paid for `tokens` at index-equivalent price `price` (rounds down).
+fn usdc_at(tokens: i128, price: i64, nf: i128) -> MathResult<i128> {
+    mul_div(mul_div(tokens, price as i128, PRICE_SCALE as i128)?, nf, NORM_SCALE)
+}
+
+fn div_up(n: i128, d: i128) -> MathResult<i128> {
+    mul_div_up(n, 1, d)
 }
 
 /// Index-equivalent price paid: `usdc · PRICE_SCALE · NORM / (tokens · nf)`.
@@ -168,6 +208,45 @@ mod tests {
         assert!(amm_buy(usdc, tok, (1_000 * USDC_SCALE) as u64, NORM_SCALE, i, 100).unwrap().is_some());
         // a buy that moves price > 1% is refused (routes to ShortVault mint)
         assert!(amm_buy(usdc, tok, (500_000 * USDC_SCALE) as u64, NORM_SCALE, i, 100).unwrap().is_none());
+    }
+
+    #[test]
+    fn amm_buy_never_fills_under_the_band() {
+        let i = power_index(100 * PRICE_SCALE).unwrap();
+        // pool quotes 5% under the index (the index moved up since it last traded)
+        let tok = 1_000 * 1_000_000u64;
+        let usdc = (9_500 * 1_000 * USDC_SCALE) as u64;
+        let usdc_in = (10_000 * USDC_SCALE) as u64;
+        let out = amm_buy(usdc, tok, usdc_in, NORM_SCALE, i, 100).unwrap().unwrap();
+        let net = usdc_in as i128 - apply_bps_up(usdc_in as i128, AMM_FEE_BPS).unwrap();
+        let paid = effective_index(net, out as i128, NORM_SCALE).unwrap();
+        let (lo, _) = amm_band(i, 100).unwrap();
+        assert!(paid >= lo as i128, "paid {paid} < floor {lo}");
+    }
+
+    #[test]
+    fn amm_sell_fills_at_the_floor_or_better() {
+        let i = power_index(100 * PRICE_SCALE).unwrap();
+        let tok = 1_000 * 1_000_000u64;
+        let usdc = (10_000 * 1_000 * USDC_SCALE) as u64;
+        let (lo, _) = amm_band(i, 100).unwrap();
+        let floor_of = |t: u64| usdc_at(t as i128, lo, NORM_SCALE).unwrap();
+        // small sell: curve price, inside the band
+        let t = 1_000_000;
+        let out = amm_sell(usdc, tok, t, NORM_SCALE, i, 100).unwrap().unwrap() as i128;
+        assert!(out > floor_of(t) - apply_bps_up(floor_of(t), AMM_FEE_BPS).unwrap());
+        // big sell: the curve would pay ~9% under; the floor pays I(1 − 1%) less fee
+        let t = 100 * 1_000_000;
+        let out = amm_sell(usdc, tok, t, NORM_SCALE, i, 100).unwrap().unwrap() as i128;
+        let floor = floor_of(t);
+        assert_eq!(out, floor - apply_bps_up(floor, AMM_FEE_BPS).unwrap());
+        // more than the USDC side holds: refused (Crab redeem)
+        assert!(amm_sell(usdc, tok, 2_000 * 1_000_000, NORM_SCALE, i, 100).unwrap().is_none());
+        // round trip never profits
+        let usdc_in = (50_000 * USDC_SCALE) as u64;
+        let got = amm_buy(usdc, tok, usdc_in, NORM_SCALE, i, 100).unwrap().unwrap();
+        let back = amm_sell(usdc + usdc_in, tok - got, got, NORM_SCALE, i, 100).unwrap().unwrap();
+        assert!(back < usdc_in);
     }
 
     #[test]

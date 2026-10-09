@@ -320,10 +320,100 @@ pub mod lvrt_power {
         Ok(())
     }
 
-    /// TODO(power): AMM sell (always fills at ≥ I(1 − b), routing to Crab
-    /// redeem when the AMM's USDC side is empty).
-    pub fn amm_sell(_ctx: Context<AmmTrade>, _tokens_in: u64, _min_usdc_out: u64) -> Result<()> {
-        err!(PowerError::NotImplemented)
+    /// QuoteAMM sell: constant product, but never under `I(1 − b)` (10 bps
+    /// fee). Refused when the AMM's USDC side can't pay.
+    /// TODO(power): route the remainder to Crab redeem once Crab exists.
+    pub fn amm_sell(mut ctx: Context<AmmTrade>, tokens_in: u64, min_usdc_out: u64) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let a = &mut ctx.accounts;
+        let ps2 = a.price_state_2.as_deref();
+        let i = accrue(&mut a.market, &a.price_state, ps2, now)?;
+        let out = pw::amm_sell(a.market.amm_usdc, a.market.amm_tokens, tokens_in, a.market.norm_factor as i128, i, band_bps(&a.price_state))
+            .m()?
+            .ok_or(PowerError::OutsideBand)?;
+        require!(out >= min_usdc_out, PowerError::Slippage);
+        token_interface::transfer_checked(
+            CpiContext::new(
+                a.power_token_program.key(),
+                TransferChecked {
+                    from: a.user_power.to_account_info(),
+                    mint: a.power_mint.to_account_info(),
+                    to: a.token_vault.to_account_info(),
+                    authority: a.user.to_account_info(),
+                },
+            ),
+            tokens_in,
+            a.power_mint.decimals,
+        )?;
+        let id = a.market.id.to_le_bytes();
+        token_interface::transfer_checked(
+            CpiContext::new_with_signer(
+                a.usdc_token_program.key(),
+                TransferChecked {
+                    from: a.usdc_vault.to_account_info(),
+                    mint: a.usdc_mint.to_account_info(),
+                    to: a.user_usdc.to_account_info(),
+                    authority: a.market.to_account_info(),
+                },
+                &[&[seeds::POWER, &id, &[a.market.bump]]],
+            ),
+            out,
+            a.usdc_mint.decimals,
+        )?;
+        // the fee stays in the pool
+        a.market.amm_usdc -= out;
+        a.market.amm_tokens += tokens_in;
+        Ok(())
+    }
+
+    /// Add AMM inventory: USDC plus PowerTokens the authority holds (minted
+    /// through its own ShortVault, so every token stays backed). The pool's
+    /// mark afterwards must sit inside the band. Inventory belongs to the
+    /// protocol; there is no withdraw path in the skeleton.
+    pub fn seed_amm(ctx: Context<SeedAmm>, usdc_in: u64, tokens_in: u64) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let a = ctx.accounts;
+        let ps2 = a.price_state_2.as_deref();
+        let i = accrue(&mut a.market, &a.price_state, ps2, now)?;
+        let usdc = a.market.amm_usdc + usdc_in;
+        let tokens = a.market.amm_tokens + tokens_in;
+        require!(usdc > 0 && tokens > 0, PowerError::InvalidParams);
+        let mark = pw::effective_index(usdc as i128, tokens as i128, a.market.norm_factor as i128).m()?;
+        let (lo, hi) = pw::amm_band(i, band_bps(&a.price_state)).m()?;
+        require!(mark >= lo as i128 && mark <= hi as i128, PowerError::OutsideBand);
+        if usdc_in > 0 {
+            token_interface::transfer_checked(
+                CpiContext::new(
+                    a.usdc_token_program.key(),
+                    TransferChecked {
+                        from: a.authority_usdc.to_account_info(),
+                        mint: a.usdc_mint.to_account_info(),
+                        to: a.usdc_vault.to_account_info(),
+                        authority: a.authority.to_account_info(),
+                    },
+                ),
+                usdc_in,
+                a.usdc_mint.decimals,
+            )?;
+        }
+        if tokens_in > 0 {
+            token_interface::transfer_checked(
+                CpiContext::new(
+                    a.power_token_program.key(),
+                    TransferChecked {
+                        from: a.authority_power.to_account_info(),
+                        mint: a.power_mint.to_account_info(),
+                        to: a.token_vault.to_account_info(),
+                        authority: a.authority.to_account_info(),
+                    },
+                ),
+                tokens_in,
+                a.power_mint.decimals,
+            )?;
+        }
+        a.market.amm_usdc = usdc;
+        a.market.amm_tokens = tokens;
+        Ok(())
     }
 
     /// TODO(power): 60-second uniform-price liquidation batches; bonus 5%
@@ -468,6 +558,33 @@ pub struct AmmTrade<'info> {
     pub usdc_mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(mut, token::mint = usdc_mint, token::authority = user)]
     pub user_usdc: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, address = market.usdc_vault)]
+    pub usdc_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub power_token_program: Interface<'info, TokenInterface>,
+    pub usdc_token_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct SeedAmm<'info> {
+    pub authority: Signer<'info>,
+    #[account(seeds = [seeds::CONFIG], bump = config.bump, has_one = authority @ PowerError::NotAuthority)]
+    pub config: Box<Account<'info, PowerConfig>>,
+    #[account(mut, seeds = [seeds::POWER, &market.id.to_le_bytes()], bump = market.bump)]
+    pub market: Box<Account<'info, PowerMarket>>,
+    #[account(address = market.price_state @ PowerError::WrongPriceState)]
+    pub price_state: Box<Account<'info, PriceState>>,
+    #[account(address = market.price_state_2 @ PowerError::WrongPriceState)]
+    pub price_state_2: Option<Account<'info, PriceState>>,
+    #[account(address = market.power_mint)]
+    pub power_mint: Box<InterfaceAccount<'info, Mint>>,
+    #[account(mut, token::mint = power_mint, token::authority = authority)]
+    pub authority_power: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, address = market.token_vault)]
+    pub token_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(address = USDC_MINT)]
+    pub usdc_mint: Box<InterfaceAccount<'info, Mint>>,
+    #[account(mut, token::mint = usdc_mint, token::authority = authority)]
+    pub authority_usdc: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, address = market.usdc_vault)]
     pub usdc_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     pub power_token_program: Interface<'info, TokenInterface>,
