@@ -46,10 +46,29 @@ keys/             program keypairs (git-ignored; back these up)
 ## Website (`web/`)
 
 Next.js 16 static export (React 19, Tailwind 4, three.js hero): marketing
-pages for the seven families plus a `/dashboard` workspace. The dashboard is
-**reference-only** today — prices are static references, orders and agent
-policies are drafts kept in `localStorage`, and the wallet integration only
-calls `connect()` to show the public key (it never asks for a signature).
+pages for the seven families plus a `/dashboard` workspace.
+
+With `NEXT_PUBLIC_CLUSTER` set (see `web/.env.example`) the dashboard is wired
+to the programs through `@solana/kit` and typed clients generated from the
+IDLs (`npm run codegen` → `web/src/generated/`):
+
+- **Wallets** via the Wallet Standard (Phantom, Solflare, Backpack); unsigned
+  transaction bytes go to the wallet, signed bytes come back. A burner test
+  wallet exists on localnet only.
+- **Live prices**: the latest oracle-signed quote (what a trade embeds) and
+  the on-chain PriceState status / session.
+- **Margin account**: balance, wallet USDC / SOL, positions with live mark and
+  P&L, exposure by family, utilization.
+- **Signed actions**: deposit (creates the margin account), withdraw (with
+  fresh prices + health accounts), open (`[Ed25519 verify][post_prices]
+  [open_position]` in one transaction, slippage-bounded), close, TP/SL
+  triggers (placed after the open, listed and cancellable in Orders), agent
+  policies as on-chain engine delegates (authorize / revoke / revoke-all kill
+  switch; withdraw permission never set), test-USDC faucet on test clusters.
+- Families not on-chain yet (Squared, Tickets, Twins, Small Caps) and limit
+  orders keep the original prepare-a-draft flow, labelled as such.
+
+Without `NEXT_PUBLIC_CLUSTER` it stays the offline reference dashboard.
 
 ```bash
 cd web && npm ci && npm run build && npm run preview   # http://127.0.0.1:3000
@@ -62,6 +81,40 @@ other than Vercel, rewrite `**/__next.<seg>.<rest>.txt` →
 `**/__next.<seg>/<rest>.txt` (Next 16 prefetch payloads; `scripts/preview.mjs`
 does this locally) — without it client-side navigation falls back to full page
 loads.
+
+## Test clusters
+
+Programs for localnet / devnet are built with `--features devnet`, which swaps
+the hard-coded USDC mint for a Leveret test mint
+(`H3tRv17bsBR3ccV5cT9nzt66uqm1wn66tT9rmAiAvrfi`, key in `keys/`) so the dev
+faucet can mint. Mainnet builds never include it.
+
+```bash
+# in WSL
+scripts/wsl-build.sh devnet                  # -> target/deploy-devnet
+scripts/localnet.sh                          # validator with all 10 programs, upgradeable
+# on Windows / anywhere with Node >= 24
+LVRT_CLUSTER=localnet node web/dev/bootstrap.ts   # idempotent: mints, feeds, markets, shards, LLP…
+LVRT_CLUSTER=localnet node web/dev/oracle.ts      # signed quotes + faucet + push/merge + TP/SL keeper
+LVRT_CLUSTER=localnet node web/dev/e2e.ts         # headless deposit → open → close → withdraw
+```
+
+`web/dev/oracle.ts` stands in for the oracle-pusher, merge-cranker and
+trigger-exec services on test clusters: it random-walks prices from the
+dashboard's reference values, signs them with the registered pusher / enclave
+keys, serves `GET /quotes`, `GET /quote/<id>`, `POST /faucet`, posts every feed
+on-chain and merges shards periodically, and executes TP/SL triggers. Test
+clusters use a 60 s quote freshness window (mainnet: 800 ms / 2 s) because
+wallets take seconds to approve and devnet can't afford a sub-second pusher.
+
+**Devnet status:** `lvrt_oracle`, `lvrt_engine`, `lvrt_vault` and
+`lvrt_fee_router` are deployed (upgrade authority
+`2FmzTtbkyfsrqgZ6jhLaTYmKVSyLQvzH52tR76MQzukG`); oracle and engine are
+bootstrapped with all 13 markets, and trading, deposits and withdrawals work
+end to end. `lvrt_insurance` (~2.5 SOL rent) is pending devnet SOL; once it is
+deployed (`scripts/deploy-devnet.sh lvrt_insurance`), re-running the bootstrap
+creates the LLP buckets, insurance funds and fee inboxes. Deploying costs the
+program's rent only: the write buffer is folded into the program account.
 
 ## Build and test
 
