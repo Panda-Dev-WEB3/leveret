@@ -10,7 +10,6 @@ import {
   appendTransactionMessageInstructions,
   compileTransaction,
   createNoopSigner,
-  createSolanaRpc,
   createTransactionMessage,
   getBase58Decoder,
   getBase64EncodedWireTransaction,
@@ -28,6 +27,7 @@ import * as orc from '../../generated/lvrt_oracle/index.ts';
 import { CUSTODY_COUNT, ONCHAIN_MARKETS, type OnchainMarket, SHARDS, onchainBySymbol } from '../../data/onchain-markets.ts';
 import { ENGINE, IX_SYSVAR, type SideName, TOKEN_PROGRAM, engine, oracle, shardFor } from './pdas.ts';
 import { type QuoteJson, ed25519Instruction, fromQuoteJson } from './price-msg.ts';
+import { createRpc } from './rpc.ts';
 import type { ChainConfig } from './config.ts';
 import type { ConnectedWallet } from './wallets.ts';
 
@@ -106,7 +106,7 @@ export class LeveretClient {
   readonly cfg: ChainConfig;
   constructor(cfg: ChainConfig) {
     this.cfg = cfg;
-    this.rpc = createSolanaRpc(cfg.rpcUrl);
+    this.rpc = createRpc(cfg.rpcUrl);
   }
 
   // ------------------------------------------------------------------ reads

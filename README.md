@@ -107,14 +107,14 @@ on-chain and merges shards periodically, and executes TP/SL triggers. Test
 clusters use a 60 s quote freshness window (mainnet: 800 ms / 2 s) because
 wallets take seconds to approve and devnet can't afford a sub-second pusher.
 
-**Devnet status:** `lvrt_oracle`, `lvrt_engine`, `lvrt_vault` and
-`lvrt_fee_router` are deployed (upgrade authority
-`2FmzTtbkyfsrqgZ6jhLaTYmKVSyLQvzH52tR76MQzukG`); oracle and engine are
-bootstrapped with all 13 markets, and trading, deposits and withdrawals work
-end to end. `lvrt_insurance` (~2.5 SOL rent) is pending devnet SOL; once it is
-deployed (`scripts/deploy-devnet.sh lvrt_insurance`), re-running the bootstrap
-creates the LLP buckets, insurance funds and fee inboxes. Deploying costs the
-program's rent only: the write buffer is folded into the program account.
+**Devnet status:** `lvrt_oracle`, `lvrt_engine`, `lvrt_vault`,
+`lvrt_insurance` and `lvrt_fee_router` are deployed (upgrade authority
+`2FmzTtbkyfsrqgZ6jhLaTYmKVSyLQvzH52tR76MQzukG`) and bootstrapped: all 13
+markets, and the Core / Stocks / Factors LLP buckets (seeded with test USDC),
+insurance funds and fee inboxes. Trading, deposits and withdrawals work end to
+end. Deploying costs the program's rent only: the write buffer is folded into
+the program account. The public devnet RPC rate-limits bursts; the client
+retries HTTP 429 with backoff (`web/src/lib/chain/rpc.ts`).
 
 ## Build and test
 

@@ -10,7 +10,6 @@ import {
   type TransactionSigner,
   appendTransactionMessageInstructions,
   createKeyPairSignerFromBytes,
-  createSolanaRpc,
   createSolanaRpcSubscriptions,
   createTransactionMessage,
   getSignatureFromTransaction,
@@ -20,6 +19,7 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
   signTransactionMessageWithSigners,
 } from '@solana/kit';
+import { createRpc } from '../src/lib/chain/rpc.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const REPO = resolve(here, '../..');
@@ -32,7 +32,7 @@ if (CLUSTER !== 'localnet' && CLUSTER !== 'devnet') throw new Error(`LVRT_CLUSTE
 export const RPC_URL = process.env.LVRT_RPC_URL ?? (CLUSTER === 'devnet' ? 'https://api.devnet.solana.com' : 'http://127.0.0.1:8899');
 export const WS_URL = process.env.LVRT_WS_URL ?? (CLUSTER === 'devnet' ? 'wss://api.devnet.solana.com' : 'ws://127.0.0.1:8900');
 
-export const rpc = createSolanaRpc(RPC_URL);
+export const rpc = createRpc(RPC_URL);
 export const rpcSubscriptions = createSolanaRpcSubscriptions(WS_URL);
 const sendAndConfirm = sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions });
 
