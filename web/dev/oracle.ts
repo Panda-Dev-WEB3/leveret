@@ -247,6 +247,10 @@ async function arb(mm: KeyPairSigner, usdcMint: Address, p: PowerProduct) {
   const market = await power.market(p.id);
   const m = await pw.fetchMaybePowerMarket(rpc, market, { commitment: 'confirmed' });
   if (!q || !m.exists || m.data.ammTokens === 0n) return;
+  // off-hours (stocks at weekends) the chain freezes the index at the last
+  // close and pauses short mints: nothing to arbitrage against the walk
+  const ps = await orc.fetchMaybePriceState(rpc, await oracle.price(p.underlyingId), { commitment: 'confirmed' });
+  if (!ps.exists || ps.data.session !== orc.Session.Regular) return;
   const { ammUsdc: x, ammTokens: y, normFactor: nf } = m.data;
   const index = powerIndex(q.msg.mid);
   const off = ((effectiveIndex(x, y, nf) - index) * 10_000n) / index;
