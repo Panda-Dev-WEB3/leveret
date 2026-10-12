@@ -67,6 +67,7 @@ impl Env {
             (lvrt_engine::ID, "lvrt_engine"),
             (lvrt_tickets::ID, "lvrt_tickets"),
             (lvrt_power::ID, "lvrt_power"),
+            (lvrt_twins::ID, "lvrt_twins"),
             (lvrt_vault::ID, "lvrt_vault"),
             (lvrt_insurance::ID, "lvrt_insurance"),
             (lvrt_fee_router::ID, "lvrt_fee_router"),

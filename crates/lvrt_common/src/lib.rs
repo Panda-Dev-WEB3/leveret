@@ -38,6 +38,7 @@ pub mod seeds {
     pub const SHARD: &[u8] = b"shard";
     pub const FUNDING: &[u8] = b"fund";
     pub const TRIGGER: &[u8] = b"trig";
+    pub const LIMIT: &[u8] = b"limit";
     pub const CUSTODY: &[u8] = b"custody";
     pub const AUTHORITY: &[u8] = b"authority";
     pub const QUEUE: &[u8] = b"queue";
@@ -59,6 +60,9 @@ pub mod seeds {
     pub const TICKET: &[u8] = b"ticket";
     pub const TWIN: &[u8] = b"twin";
     pub const TWIN_MINT: &[u8] = b"twin_mint";
+    /// Data-less PDA that owns a twin's engine margin account (it pays rent, so
+    /// it must be a system account): `[TWIN_SIGNER, &symbol]`.
+    pub const TWIN_SIGNER: &[u8] = b"twin_signer";
     pub const RECEIPT: &[u8] = b"receipt";
     pub const ROUTER: &[u8] = b"router";
     /// Per-bucket fee inbox owned by the fee router: `[FEE_INBOX, &[bucket]]`.
