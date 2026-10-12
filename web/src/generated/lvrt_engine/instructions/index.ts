@@ -8,6 +8,7 @@
 
 export * from "./applyCorporateAction.ts";
 export * from "./autoDeleverage.ts";
+export * from "./cancelLimit.ts";
 export * from "./cancelTrigger.ts";
 export * from "./claimQueuedProfit.ts";
 export * from "./closePosition.ts";
@@ -16,6 +17,7 @@ export * from "./createMarket.ts";
 export * from "./declareCorporateAction.ts";
 export * from "./deposit.ts";
 export * from "./depositUsdt.ts";
+export * from "./executeLimit.ts";
 export * from "./executeTrigger.ts";
 export * from "./initCustody.ts";
 export * from "./initialize.ts";
@@ -23,6 +25,7 @@ export * from "./initShard.ts";
 export * from "./liquidate.ts";
 export * from "./mergeShards.ts";
 export * from "./openPosition.ts";
+export * from "./placeLimit.ts";
 export * from "./placeTrigger.ts";
 export * from "./setAdlParams.ts";
 export * from "./setDelegate.ts";

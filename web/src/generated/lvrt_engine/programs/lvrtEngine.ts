@@ -38,6 +38,7 @@ import {
   getBucketRiskCodec,
   getEngineConfigCodec,
   getFundingStateCodec,
+  getLimitOrderCodec,
   getMarginAccountCodec,
   getMarketCodec,
   getMarketShardCodec,
@@ -49,6 +50,8 @@ import {
   type EngineConfigArgs,
   type FundingState,
   type FundingStateArgs,
+  type LimitOrder,
+  type LimitOrderArgs,
   type MarginAccount,
   type MarginAccountArgs,
   type Market,
@@ -63,6 +66,7 @@ import {
 import {
   getApplyCorporateActionInstruction,
   getAutoDeleverageInstructionAsync,
+  getCancelLimitInstruction,
   getCancelTriggerInstruction,
   getClaimQueuedProfitInstruction,
   getClosePositionInstruction,
@@ -71,6 +75,7 @@ import {
   getDeclareCorporateActionInstructionAsync,
   getDepositInstructionAsync,
   getDepositUsdtInstruction,
+  getExecuteLimitInstructionAsync,
   getExecuteTriggerInstruction,
   getInitCustodyInstructionAsync,
   getInitializeInstructionAsync,
@@ -78,6 +83,7 @@ import {
   getLiquidateInstruction,
   getMergeShardsInstruction,
   getOpenPositionInstructionAsync,
+  getPlaceLimitInstructionAsync,
   getPlaceTriggerInstructionAsync,
   getSetAdlParamsInstructionAsync,
   getSetDelegateInstruction,
@@ -89,6 +95,7 @@ import {
   getWithdrawInstructionAsync,
   parseApplyCorporateActionInstruction,
   parseAutoDeleverageInstruction,
+  parseCancelLimitInstruction,
   parseCancelTriggerInstruction,
   parseClaimQueuedProfitInstruction,
   parseClosePositionInstruction,
@@ -97,6 +104,7 @@ import {
   parseDeclareCorporateActionInstruction,
   parseDepositInstruction,
   parseDepositUsdtInstruction,
+  parseExecuteLimitInstruction,
   parseExecuteTriggerInstruction,
   parseInitCustodyInstruction,
   parseInitializeInstruction,
@@ -104,6 +112,7 @@ import {
   parseLiquidateInstruction,
   parseMergeShardsInstruction,
   parseOpenPositionInstruction,
+  parsePlaceLimitInstruction,
   parsePlaceTriggerInstruction,
   parseSetAdlParamsInstruction,
   parseSetDelegateInstruction,
@@ -115,6 +124,7 @@ import {
   parseWithdrawInstruction,
   type ApplyCorporateActionInput,
   type AutoDeleverageAsyncInput,
+  type CancelLimitInput,
   type CancelTriggerInput,
   type ClaimQueuedProfitInput,
   type ClosePositionInput,
@@ -123,6 +133,7 @@ import {
   type DeclareCorporateActionAsyncInput,
   type DepositAsyncInput,
   type DepositUsdtInput,
+  type ExecuteLimitAsyncInput,
   type ExecuteTriggerInput,
   type InitCustodyAsyncInput,
   type InitializeAsyncInput,
@@ -132,6 +143,7 @@ import {
   type OpenPositionAsyncInput,
   type ParsedApplyCorporateActionInstruction,
   type ParsedAutoDeleverageInstruction,
+  type ParsedCancelLimitInstruction,
   type ParsedCancelTriggerInstruction,
   type ParsedClaimQueuedProfitInstruction,
   type ParsedClosePositionInstruction,
@@ -140,6 +152,7 @@ import {
   type ParsedDeclareCorporateActionInstruction,
   type ParsedDepositInstruction,
   type ParsedDepositUsdtInstruction,
+  type ParsedExecuteLimitInstruction,
   type ParsedExecuteTriggerInstruction,
   type ParsedInitCustodyInstruction,
   type ParsedInitializeInstruction,
@@ -147,6 +160,7 @@ import {
   type ParsedLiquidateInstruction,
   type ParsedMergeShardsInstruction,
   type ParsedOpenPositionInstruction,
+  type ParsedPlaceLimitInstruction,
   type ParsedPlaceTriggerInstruction,
   type ParsedSetAdlParamsInstruction,
   type ParsedSetDelegateInstruction,
@@ -156,6 +170,7 @@ import {
   type ParsedSetRolesInstruction,
   type ParsedSettleShardInstruction,
   type ParsedWithdrawInstruction,
+  type PlaceLimitAsyncInput,
   type PlaceTriggerAsyncInput,
   type SetAdlParamsAsyncInput,
   type SetDelegateInput,
@@ -169,6 +184,7 @@ import {
 import {
   findConfigPda,
   findEngineSignerPda,
+  findOrderPda,
   findTriggerPda,
 } from "../pdas/index.ts";
 
@@ -179,19 +195,21 @@ export const LvrtEngineAccount = {
   0: "BucketRisk",
   1: "EngineConfig",
   2: "FundingState",
-  3: "MarginAccount",
-  4: "Market",
-  5: "MarketShard",
-  6: "Position",
-  7: "Trigger",
+  3: "LimitOrder",
+  4: "MarginAccount",
+  5: "Market",
+  6: "MarketShard",
+  7: "Position",
+  8: "Trigger",
   BucketRisk: 0,
   EngineConfig: 1,
   FundingState: 2,
-  MarginAccount: 3,
-  Market: 4,
-  MarketShard: 5,
-  Position: 6,
-  Trigger: 7,
+  LimitOrder: 3,
+  MarginAccount: 4,
+  Market: 5,
+  MarketShard: 6,
+  Position: 7,
+  Trigger: 8,
 } as const;
 
 export type LvrtEngineAccount = (typeof LvrtEngineAccount)[Exclude<
@@ -235,6 +253,17 @@ export function identifyLvrtEngineAccount(
     )
   ) {
     return LvrtEngineAccount.FundingState;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([137, 183, 212, 91, 115, 29, 141, 227]),
+      ),
+      0,
+    )
+  ) {
+    return LvrtEngineAccount.LimitOrder;
   }
   if (
     containsBytes(
@@ -382,56 +411,62 @@ export function identifyLvrtEngineEvent(
 export const LvrtEngineInstruction = {
   0: "ApplyCorporateAction",
   1: "AutoDeleverage",
-  2: "CancelTrigger",
-  3: "ClaimQueuedProfit",
-  4: "ClosePosition",
-  5: "CreateMarginAccount",
-  6: "CreateMarket",
-  7: "DeclareCorporateAction",
-  8: "Deposit",
-  9: "DepositUsdt",
-  10: "ExecuteTrigger",
-  11: "InitCustody",
-  12: "InitShard",
-  13: "Initialize",
-  14: "Liquidate",
-  15: "MergeShards",
-  16: "OpenPosition",
-  17: "PlaceTrigger",
-  18: "SetAdlParams",
-  19: "SetDelegate",
-  20: "SetMarketFlags",
-  21: "SetMarketRisk",
-  22: "SetOpensPaused",
-  23: "SetRoles",
-  24: "SettleShard",
-  25: "Withdraw",
+  2: "CancelLimit",
+  3: "CancelTrigger",
+  4: "ClaimQueuedProfit",
+  5: "ClosePosition",
+  6: "CreateMarginAccount",
+  7: "CreateMarket",
+  8: "DeclareCorporateAction",
+  9: "Deposit",
+  10: "DepositUsdt",
+  11: "ExecuteLimit",
+  12: "ExecuteTrigger",
+  13: "InitCustody",
+  14: "InitShard",
+  15: "Initialize",
+  16: "Liquidate",
+  17: "MergeShards",
+  18: "OpenPosition",
+  19: "PlaceLimit",
+  20: "PlaceTrigger",
+  21: "SetAdlParams",
+  22: "SetDelegate",
+  23: "SetMarketFlags",
+  24: "SetMarketRisk",
+  25: "SetOpensPaused",
+  26: "SetRoles",
+  27: "SettleShard",
+  28: "Withdraw",
   ApplyCorporateAction: 0,
   AutoDeleverage: 1,
-  CancelTrigger: 2,
-  ClaimQueuedProfit: 3,
-  ClosePosition: 4,
-  CreateMarginAccount: 5,
-  CreateMarket: 6,
-  DeclareCorporateAction: 7,
-  Deposit: 8,
-  DepositUsdt: 9,
-  ExecuteTrigger: 10,
-  InitCustody: 11,
-  InitShard: 12,
-  Initialize: 13,
-  Liquidate: 14,
-  MergeShards: 15,
-  OpenPosition: 16,
-  PlaceTrigger: 17,
-  SetAdlParams: 18,
-  SetDelegate: 19,
-  SetMarketFlags: 20,
-  SetMarketRisk: 21,
-  SetOpensPaused: 22,
-  SetRoles: 23,
-  SettleShard: 24,
-  Withdraw: 25,
+  CancelLimit: 2,
+  CancelTrigger: 3,
+  ClaimQueuedProfit: 4,
+  ClosePosition: 5,
+  CreateMarginAccount: 6,
+  CreateMarket: 7,
+  DeclareCorporateAction: 8,
+  Deposit: 9,
+  DepositUsdt: 10,
+  ExecuteLimit: 11,
+  ExecuteTrigger: 12,
+  InitCustody: 13,
+  InitShard: 14,
+  Initialize: 15,
+  Liquidate: 16,
+  MergeShards: 17,
+  OpenPosition: 18,
+  PlaceLimit: 19,
+  PlaceTrigger: 20,
+  SetAdlParams: 21,
+  SetDelegate: 22,
+  SetMarketFlags: 23,
+  SetMarketRisk: 24,
+  SetOpensPaused: 25,
+  SetRoles: 26,
+  SettleShard: 27,
+  Withdraw: 28,
 } as const;
 
 export type LvrtEngineInstruction = (typeof LvrtEngineInstruction)[Exclude<
@@ -464,6 +499,17 @@ export function identifyLvrtEngineInstruction(
     )
   ) {
     return LvrtEngineInstruction.AutoDeleverage;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([22, 246, 198, 172, 10, 80, 165, 19]),
+      ),
+      0,
+    )
+  ) {
+    return LvrtEngineInstruction.CancelLimit;
   }
   if (
     containsBytes(
@@ -557,6 +603,17 @@ export function identifyLvrtEngineInstruction(
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([133, 156, 154, 239, 32, 208, 39, 252]),
+      ),
+      0,
+    )
+  ) {
+    return LvrtEngineInstruction.ExecuteLimit;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
         new Uint8Array([158, 99, 201, 137, 192, 20, 236, 136]),
       ),
       0,
@@ -629,6 +686,17 @@ export function identifyLvrtEngineInstruction(
     )
   ) {
     return LvrtEngineInstruction.OpenPosition;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([203, 115, 255, 244, 230, 132, 229, 124]),
+      ),
+      0,
+    )
+  ) {
+    return LvrtEngineInstruction.PlaceLimit;
   }
   if (
     containsBytes(
@@ -745,6 +813,9 @@ export type ParsedLvrtEngineInstruction<
       instructionType: typeof LvrtEngineInstruction.AutoDeleverage;
     } & ParsedAutoDeleverageInstruction<TProgram>)
   | ({
+      instructionType: typeof LvrtEngineInstruction.CancelLimit;
+    } & ParsedCancelLimitInstruction<TProgram>)
+  | ({
       instructionType: typeof LvrtEngineInstruction.CancelTrigger;
     } & ParsedCancelTriggerInstruction<TProgram>)
   | ({
@@ -769,6 +840,9 @@ export type ParsedLvrtEngineInstruction<
       instructionType: typeof LvrtEngineInstruction.DepositUsdt;
     } & ParsedDepositUsdtInstruction<TProgram>)
   | ({
+      instructionType: typeof LvrtEngineInstruction.ExecuteLimit;
+    } & ParsedExecuteLimitInstruction<TProgram>)
+  | ({
       instructionType: typeof LvrtEngineInstruction.ExecuteTrigger;
     } & ParsedExecuteTriggerInstruction<TProgram>)
   | ({
@@ -789,6 +863,9 @@ export type ParsedLvrtEngineInstruction<
   | ({
       instructionType: typeof LvrtEngineInstruction.OpenPosition;
     } & ParsedOpenPositionInstruction<TProgram>)
+  | ({
+      instructionType: typeof LvrtEngineInstruction.PlaceLimit;
+    } & ParsedPlaceLimitInstruction<TProgram>)
   | ({
       instructionType: typeof LvrtEngineInstruction.PlaceTrigger;
     } & ParsedPlaceTriggerInstruction<TProgram>)
@@ -834,6 +911,13 @@ export function parseLvrtEngineInstruction<TProgram extends string>(
       return {
         instructionType: LvrtEngineInstruction.AutoDeleverage,
         ...parseAutoDeleverageInstruction(instruction),
+      };
+    }
+    case LvrtEngineInstruction.CancelLimit: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: LvrtEngineInstruction.CancelLimit,
+        ...parseCancelLimitInstruction(instruction),
       };
     }
     case LvrtEngineInstruction.CancelTrigger: {
@@ -892,6 +976,13 @@ export function parseLvrtEngineInstruction<TProgram extends string>(
         ...parseDepositUsdtInstruction(instruction),
       };
     }
+    case LvrtEngineInstruction.ExecuteLimit: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: LvrtEngineInstruction.ExecuteLimit,
+        ...parseExecuteLimitInstruction(instruction),
+      };
+    }
     case LvrtEngineInstruction.ExecuteTrigger: {
       assertIsInstructionWithAccounts(instruction);
       return {
@@ -939,6 +1030,13 @@ export function parseLvrtEngineInstruction<TProgram extends string>(
       return {
         instructionType: LvrtEngineInstruction.OpenPosition,
         ...parseOpenPositionInstruction(instruction),
+      };
+    }
+    case LvrtEngineInstruction.PlaceLimit: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: LvrtEngineInstruction.PlaceLimit,
+        ...parsePlaceLimitInstruction(instruction),
       };
     }
     case LvrtEngineInstruction.PlaceTrigger: {
@@ -1031,6 +1129,8 @@ export type LvrtEnginePluginAccounts = {
     SelfFetchFunctions<EngineConfigArgs, EngineConfig>;
   fundingState: ReturnType<typeof getFundingStateCodec> &
     SelfFetchFunctions<FundingStateArgs, FundingState>;
+  limitOrder: ReturnType<typeof getLimitOrderCodec> &
+    SelfFetchFunctions<LimitOrderArgs, LimitOrder>;
   marginAccount: ReturnType<typeof getMarginAccountCodec> &
     SelfFetchFunctions<MarginAccountArgs, MarginAccount>;
   market: ReturnType<typeof getMarketCodec> &
@@ -1052,6 +1152,9 @@ export type LvrtEnginePluginInstructions = {
     input: AutoDeleverageAsyncInput,
   ) => ReturnType<typeof getAutoDeleverageInstructionAsync> &
     SelfPlanAndSendFunctions;
+  cancelLimit: (
+    input: CancelLimitInput,
+  ) => ReturnType<typeof getCancelLimitInstruction> & SelfPlanAndSendFunctions;
   cancelTrigger: (
     input: CancelTriggerInput,
   ) => ReturnType<typeof getCancelTriggerInstruction> &
@@ -1082,6 +1185,10 @@ export type LvrtEnginePluginInstructions = {
   depositUsdt: (
     input: DepositUsdtInput,
   ) => ReturnType<typeof getDepositUsdtInstruction> & SelfPlanAndSendFunctions;
+  executeLimit: (
+    input: ExecuteLimitAsyncInput,
+  ) => ReturnType<typeof getExecuteLimitInstructionAsync> &
+    SelfPlanAndSendFunctions;
   executeTrigger: (
     input: ExecuteTriggerInput,
   ) => ReturnType<typeof getExecuteTriggerInstruction> &
@@ -1106,6 +1213,10 @@ export type LvrtEnginePluginInstructions = {
   openPosition: (
     input: OpenPositionAsyncInput,
   ) => ReturnType<typeof getOpenPositionInstructionAsync> &
+    SelfPlanAndSendFunctions;
+  placeLimit: (
+    input: PlaceLimitAsyncInput,
+  ) => ReturnType<typeof getPlaceLimitInstructionAsync> &
     SelfPlanAndSendFunctions;
   placeTrigger: (
     input: PlaceTriggerAsyncInput,
@@ -1147,6 +1258,7 @@ export type LvrtEnginePluginInstructions = {
 export type LvrtEnginePluginPdas = {
   config: typeof findConfigPda;
   engineSigner: typeof findEngineSignerPda;
+  order: typeof findOrderPda;
   trigger: typeof findTriggerPda;
 };
 
@@ -1167,6 +1279,7 @@ export function lvrtEngineProgram() {
           bucketRisk: addSelfFetchFunctions(client, getBucketRiskCodec()),
           engineConfig: addSelfFetchFunctions(client, getEngineConfigCodec()),
           fundingState: addSelfFetchFunctions(client, getFundingStateCodec()),
+          limitOrder: addSelfFetchFunctions(client, getLimitOrderCodec()),
           marginAccount: addSelfFetchFunctions(client, getMarginAccountCodec()),
           market: addSelfFetchFunctions(client, getMarketCodec()),
           marketShard: addSelfFetchFunctions(client, getMarketShardCodec()),
@@ -1183,6 +1296,11 @@ export function lvrtEngineProgram() {
             addSelfPlanAndSendFunctions(
               client,
               getAutoDeleverageInstructionAsync(input),
+            ),
+          cancelLimit: (input) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getCancelLimitInstruction(input),
             ),
           cancelTrigger: (input) =>
             addSelfPlanAndSendFunctions(
@@ -1227,6 +1345,11 @@ export function lvrtEngineProgram() {
               client,
               getDepositUsdtInstruction(input),
             ),
+          executeLimit: (input) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getExecuteLimitInstructionAsync(input),
+            ),
           executeTrigger: (input) =>
             addSelfPlanAndSendFunctions(
               client,
@@ -1267,6 +1390,11 @@ export function lvrtEngineProgram() {
             addSelfPlanAndSendFunctions(
               client,
               getOpenPositionInstructionAsync(input),
+            ),
+          placeLimit: (input) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getPlaceLimitInstructionAsync(input),
             ),
           placeTrigger: (input) =>
             addSelfPlanAndSendFunctions(
@@ -1317,6 +1445,7 @@ export function lvrtEngineProgram() {
         pdas: {
           config: findConfigPda,
           engineSigner: findEngineSignerPda,
+          order: findOrderPda,
           trigger: findTriggerPda,
         },
         identifyAccount: identifyLvrtEngineAccount,

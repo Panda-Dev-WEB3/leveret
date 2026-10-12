@@ -2,7 +2,7 @@
 // service (Backend §13): signs PriceMsg reports with the registered pusher /
 // enclave keys, serves them to the dashboard (which embeds them in its own
 // transactions), periodically posts them on-chain, and runs the shard-merge
-// crank, the TP/SL keeper, the ticket knock-out keeper and a QuoteAMM
+// crank, the TP/SL and limit-order keepers, the ticket knock-out keeper and a QuoteAMM
 // arbitrageur that keeps the Squared pools on their index. Also a test-USDC
 // faucet.
 //
@@ -167,6 +167,64 @@ async function keeperLoop(keeper: KeyPairSigner) {
       }
     } catch (e) {
       console.error('[keeper scan]', (e as Error).message);
+    }
+    await sleep(KEEPER_EVERY_MS);
+  }
+}
+
+/** Limit-order keeper: fill a limit-open order through the engine's open
+ *  path once the signed quote is through its limit (buy: ask ≤ limit, sell:
+ *  bid ≥ limit). The program re-checks the fill against the limit. */
+async function limitLoop(keeper: KeyPairSigner) {
+  const keeperMargin = await engine.margin(keeper.address);
+  const dec = eng.getLimitOrderDecoder();
+  const disc = getBase58Decoder().decode(eng.LIMIT_ORDER_DISCRIMINATOR);
+  for (;;) {
+    try {
+      if (!(await eng.fetchMaybeMarginAccount(rpc, keeperMargin)).exists) {
+        await sleep(KEEPER_EVERY_MS);
+        continue; // keeperLoop creates it
+      }
+      const res = await rpc
+        .getProgramAccounts(ENGINE, { encoding: 'base64', commitment: 'confirmed', filters: [{ memcmp: { offset: 0n, bytes: disc as never, encoding: 'base58' } }] })
+        .send();
+      const now = Math.floor(Date.now() / 1000);
+      for (const { pubkey, account } of res) {
+        if (inFlight.has(pubkey)) continue;
+        const o = dec.decode(getBase64Encoder().encode(account.data[0]));
+        const q = latest.get(o.marketId);
+        if (!q || Number(o.expiry) < now) continue;
+        const long = o.side === eng.Side.Long;
+        if (long ? q.msg.ask > o.limitPx : q.msg.bid < o.limitPx) continue;
+        inFlight.add(pubkey);
+        try {
+          const post = orc.getPostPricesInstruction({ feed: await oracle.feed(o.marketId), priceState: await oracle.price(o.marketId), calendar: await oracle.calendar(), instructions: IX_SYSVAR });
+          const keys = await Promise.all(q.sigs.map(async (sg) => ({ address: await oracle.signerKey(sg.signer), role: 0 as const })));
+          await send(keeper, [
+            ed25519Instruction(q.sigs),
+            { ...post, accounts: [...post.accounts, ...keys] },
+            eng.getExecuteLimitInstruction({
+              keeper,
+              keeperMargin,
+              order: pubkey,
+              config: await engine.config(),
+              margin: o.margin,
+              market: await engine.market(o.marketId),
+              fundingState: await engine.funding(o.marketId),
+              priceState: await oracle.price(o.marketId),
+              shard: await engine.shard(o.marketId, shardFor(o.margin, SHARDS)),
+              position: await engine.position(o.margin, o.marketId, long ? 'Long' : 'Short'),
+            }),
+          ]);
+          console.log(`[limit] ${long ? 'buy' : 'sell'} limit filled on market ${o.marketId} at ${(Number(q.msg.mid) / 1e8).toFixed(2)} (limit ${(Number(o.limitPx) / 1e8).toFixed(2)})`);
+        } catch (e) {
+          console.error('[limit]', (e as Error).message.split(String.fromCharCode(10)).slice(0, 12).join(String.fromCharCode(10)));
+        } finally {
+          inFlight.delete(pubkey);
+        }
+      }
+    } catch (e) {
+      console.error('[limit scan]', (e as Error).message);
     }
     await sleep(KEEPER_EVERY_MS);
   }
@@ -338,6 +396,7 @@ async function main() {
   setInterval(() => tick(pusherA, pusherB, enclave).catch((e) => console.error('[tick]', e)), TICK_MS);
   void pushLoop(deployer);
   void keeperLoop(deployer).catch((e) => console.error('[keeper] stopped:', e));
+  void limitLoop(deployer).catch((e) => console.error('[limit] stopped:', e));
   if ((await rpc.getAccountInfo(TICKETS, { encoding: 'base64' }).send()).value) void knockOutLoop(deployer, pusherA.address);
   if ((await rpc.getAccountInfo(await power.config(), { encoding: 'base64' }).send()).value) void arbLoop(deployer, usdcMint);
 

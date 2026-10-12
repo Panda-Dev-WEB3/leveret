@@ -1,13 +1,13 @@
 // Headless end-to-end for Squared and Tickets through the dashboard's own
 // builders: SOL² long buy → sell, SOL² short open → close, SOL-T ticket buy →
-// sell back. Needs the dev oracle running (quotes + faucet). The trader must
+// sell back, lSOL twin mint → partial redeem → full redeem. Needs the dev oracle running (quotes + faucet). The trader must
 // not be the deployer (its ShortVault holds the AMM seed; the dev oracle's
 // arbitrageur trades as the deployer).
 //
 //   LVRT_CLUSTER=devnet LVRT_QUOTE_API=http://127.0.0.1:8788 node web/dev/e2e-products.ts
 import { LeveretClient } from '../src/lib/chain/client.ts';
 import type { ConnectedWallet } from '../src/lib/chain/wallets.ts';
-import { powerBySymbol, ticketBySymbol } from '../src/data/onchain-products.ts';
+import { powerBySymbol, ticketBySymbol, twinBySymbol } from '../src/data/onchain-products.ts';
 import * as pr from '../src/lib/chain/products.ts';
 import { lamports } from '@solana/kit';
 import { getTransferSolInstruction } from '@solana-program/system';
@@ -15,7 +15,7 @@ import { CLUSTER, RPC_URL, deployerPath, devKey, loadSigner, rpc, send, sleep } 
 
 const QUOTE_API = process.env.LVRT_QUOTE_API ?? 'http://127.0.0.1:8787';
 const usdcMint = (process.env.LVRT_USDC_MINT ?? 'H3tRv17bsBR3ccV5cT9nzt66uqm1wn66tT9rmAiAvrfi') as never;
-const cfg = { cluster: CLUSTER, rpcUrl: RPC_URL, quoteApi: QUOTE_API, usdcMint, chain: `solana:${CLUSTER}` as const, testCluster: true };
+const cfg = { cluster: CLUSTER, rpcUrl: RPC_URL, quoteApi: QUOTE_API, usdcMint, chain: `solana:${CLUSTER}` as const, testCluster: true, limitOrders: true };
 const client = new LeveretClient(cfg);
 const kp = await devKey(process.env.LVRT_E2E_KEY ?? 'e2e-trader');
 const wallet: ConnectedWallet = { name: 'e2e', address: kp.address, keypair: kp, signTransaction: async () => { throw new Error('unused'); }, disconnect: async () => {} };
@@ -80,5 +80,23 @@ if (!t) throw new Error('ticket not found');
 await client.sendAll(wallet, await pr.ticketSellIxs(client, kp.address, t, SLIP));
 const left = (await pr.holdings(client, kp.address)).tickets.filter((x) => x.address === t.address).length;
 console.log(`SOL-T sell  wallet ${(await wUsdc()).toFixed(2)} USDC · ticket closed: ${left === 0}`);
+// Twin
+const lSol = twinBySymbol.get('lSOL')!;
+const twinHeld = async () => (await pr.holdings(client, kp.address)).twins.find((x) => x.product.symbol === 'lSOL')?.tokens ?? 0n;
+const t0 = await twinHeld();
+const tm = await pr.twinMintIxs(client, kp.address, lSol, 100, SLIP);
+let w0 = await wUsdc();
+await client.sendAll(wallet, tm.txs);
+const minted = (await twinHeld()) - t0;
+console.log(`lSOL mint   +${(Number(minted) / 1e6).toFixed(6)} twins for ${(w0 - (await wUsdc())).toFixed(4)} USDC (asked ${(Number(tm.twins) / 1e6).toFixed(6)})`);
+if (minted !== tm.twins) throw new Error('twin count differs from the request');
+const half = minted / 2n;
+w0 = await wUsdc();
+await client.sendAll(wallet, await pr.twinRedeemIxs(client, kp.address, { product: lSol, tokens: half }, half, SLIP));
+console.log(`lSOL redeem ${(Number(half) / 1e6).toFixed(6)} → ${((await wUsdc()) - w0).toFixed(4)} USDC`);
+const rest = await twinHeld();
+await client.sendAll(wallet, await pr.twinRedeemIxs(client, kp.address, { product: lSol, tokens: rest }, rest, SLIP));
+console.log(`lSOL redeem the rest · twins left ${(Number(await twinHeld()) / 1e6).toFixed(6)} · wallet ${(await wUsdc()).toFixed(2)}`);
+
 console.log(`net over the run: ${((await wUsdc()) - start).toFixed(2)} USDC (fees, spreads, AMM curve)`);
 console.log('e2e products ok');

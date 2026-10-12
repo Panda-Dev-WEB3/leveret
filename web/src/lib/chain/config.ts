@@ -30,6 +30,8 @@ export const chainConfig = cluster
       /** Wallet Standard chain id. */
       chain: `solana:${cluster}` as const,
       testCluster: cluster !== 'mainnet',
+      /** On-chain limit orders need an engine with `place_limit` deployed on this cluster. */
+      limitOrders: process.env.NEXT_PUBLIC_LIMIT_ORDERS === '1',
     }
   : null;
 

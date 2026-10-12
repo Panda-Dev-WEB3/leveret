@@ -1,13 +1,16 @@
-// Squared (lvrt_power QuoteAMM + ShortVault) and Tickets (lvrt_tickets) for
-// the dashboard: on-chain reads and transaction builders. Every trade carries
+// Squared (lvrt_power QuoteAMM + ShortVault), Tickets (lvrt_tickets) and
+// Twins (lvrt_twins) for the dashboard: on-chain reads and transaction builders. Every trade carries
 // the underlying's signed quote ([Ed25519][post_prices]) so the program prices
 // against the same report the dashboard quoted from.
 import { type Address, type Instruction, createNoopSigner, getBase58Decoder, getBase64Encoder } from '@solana/kit';
 import { findAssociatedTokenPda, getCreateAssociatedTokenIdempotentInstructionAsync } from '@solana-program/token';
 import * as pw from '../../generated/lvrt_power/index.ts';
 import * as tk from '../../generated/lvrt_tickets/index.ts';
-import { POWER_MARKETS, type PowerProduct, TICKET_MARKETS, type TicketProduct } from '../../data/onchain-products.ts';
-import { TICKETS, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, power, oracle, tickets } from './pdas.ts';
+import * as tw from '../../generated/lvrt_twins/index.ts';
+import * as orc from '../../generated/lvrt_oracle/index.ts';
+import { POWER_MARKETS, type PowerProduct, TICKET_MARKETS, TWIN_MARKETS, type TicketProduct, type TwinProduct, twinSymbolBytes } from '../../data/onchain-products.ts';
+import { CUSTODY_COUNT, SHARDS } from '../../data/onchain-markets.ts';
+import { ENGINE, TICKETS, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, engine, power, oracle, shardFor, tickets, twins } from './pdas.ts';
 import {
   AMM_BAND_SESSION_BPS,
   NORM_SCALE,
@@ -67,15 +70,31 @@ export interface LiveTicket {
   notional: bigint;
 }
 
+export interface LiveTwin {
+  product: TwinProduct;
+  feeBps: number;
+}
+
+export interface TwinHolding {
+  product: TwinProduct;
+  /** base units: 1e6 = one twin = one unit of the underlying */
+  tokens: bigint;
+}
+
 export interface ProductsState {
   power: Map<string, LivePower>;
   tickets: Map<string, LiveTicketMarket>;
+  twins: Map<string, LiveTwin>;
 }
 
 export interface Holdings {
   power: PowerHolding[];
   tickets: LiveTicket[];
+  twins: TwinHolding[];
 }
+
+/** Engine fee (≤ 6 bps) + twin fee each way: what a quote leaves room for. */
+const TWIN_COST_BPS = 6 + 10;
 
 /** USDC value per whole PowerToken at underlying price `s` (1e8). */
 export const perToken = (p: LivePower, s: bigint) => Number(positionValue(TOKEN, p.normFactor, powerIndex(s))) / 1e6;
@@ -88,11 +107,16 @@ export const ticketValueAt = (t: LiveTicket, s: bigint, halfSpreadBps: number) =
 };
 
 export async function productMarkets(c: LeveretClient): Promise<ProductsState> {
-  const [pm, tm] = await Promise.all([
+  const [pm, tm, tv] = await Promise.all([
     pw.fetchAllMaybePowerMarket(c.rpc, await Promise.all(POWER_MARKETS.map((p) => power.market(p.id))), CONFIRMED),
     tk.fetchAllMaybeTicketMarket(c.rpc, await Promise.all(TICKET_MARKETS.map((t) => tickets.market(t.marketId))), CONFIRMED),
+    tw.fetchAllMaybeTwinVault(c.rpc, await Promise.all(TWIN_MARKETS.map((t) => twins.twin(twinSymbolBytes(t.symbol)))), CONFIRMED),
   ]);
-  const out: ProductsState = { power: new Map(), tickets: new Map() };
+  const out: ProductsState = { power: new Map(), tickets: new Map(), twins: new Map() };
+  TWIN_MARKETS.forEach((product, i) => {
+    const v = tv[i];
+    if (v.exists) out.twins.set(product.symbol, { product, feeBps: v.data.feeBps });
+  });
   POWER_MARKETS.forEach((product, i) => {
     const m = pm[i];
     if (!m.exists) return;
@@ -113,14 +137,17 @@ export async function productMarkets(c: LeveretClient): Promise<ProductsState> {
 
 export async function holdings(c: LeveretClient, owner: Address): Promise<Holdings> {
   const powerAtas = await Promise.all(POWER_MARKETS.map(async (p) => (await findAssociatedTokenPda({ owner, mint: await power.mint(p.id), tokenProgram: TOKEN_2022_PROGRAM }))[0]));
+  const twinAtas = await Promise.all(TWIN_MARKETS.map(async (t) => (await findAssociatedTokenPda({ owner, mint: await twins.mint(twinSymbolBytes(t.symbol)), tokenProgram: TOKEN_2022_PROGRAM }))[0]));
   const vaults = await pw.fetchAllMaybeShortVault(c.rpc, await Promise.all(POWER_MARKETS.map(async (p) => power.shortVault(await power.market(p.id), owner))), CONFIRMED);
   // one call for every PowerToken account: SPL / Token-2022 amount is the u64 at offset 64
-  const { value: accts } = await c.rpc.getMultipleAccounts(powerAtas, { encoding: 'base64', commitment: 'confirmed' }).send();
-  const balances = accts.map((a) => {
+  const { value: accts } = await c.rpc.getMultipleAccounts([...powerAtas, ...twinAtas], { encoding: 'base64', commitment: 'confirmed' }).send();
+  const all = accts.map((a) => {
     if (!a) return 0n;
     const b = getBase64Encoder().encode(a.data[0]);
     return b.length >= 72 ? new DataView(b.buffer, b.byteOffset, b.byteLength).getBigUint64(64, true) : 0n;
   });
+  const balances = all.slice(0, powerAtas.length);
+  const twinsOut: TwinHolding[] = TWIN_MARKETS.map((product, i) => ({ product, tokens: all[powerAtas.length + i] })).filter((h) => h.tokens > 0n);
   const powerOut: PowerHolding[] = [];
   POWER_MARKETS.forEach((product, i) => {
     const v = vaults[i];
@@ -148,7 +175,7 @@ export async function holdings(c: LeveretClient, owner: Address): Promise<Holdin
     ticketsOut.push({ address: pubkey, product, side: t.side === tk.Side.Long ? 'Long' : 'Short', r: t.r, fInitial: t.fInitial, rate: t.rate, issuedAt: t.issuedAt, notional: t.notional });
   }
   ticketsOut.sort((a, b) => Number(b.issuedAt - a.issuedAt));
-  return { power: powerOut, tickets: ticketsOut };
+  return { power: powerOut, tickets: ticketsOut, twins: twinsOut };
 }
 
 // ---------------------------------------------------------------- power
@@ -358,4 +385,63 @@ export async function ticketSellIxs(c: LeveretClient, owner: Address, t: LiveTic
       minOut: (out * (BPS - slipBps(slippagePct))) / BPS,
     }),
   ]);
+}
+
+// ---------------------------------------------------------------- twins
+
+async function twinAccounts(c: LeveretClient, owner: Address, t: TwinProduct) {
+  const sym = twinSymbolBytes(t.symbol);
+  const twinSigner = await twins.signer(sym);
+  const margin = await engine.margin(twinSigner);
+  const mint = await twins.mint(sym);
+  const [userTwin] = await findAssociatedTokenPda({ owner, mint, tokenProgram: TOKEN_2022_PROGRAM });
+  const [userUsdc] = await findAssociatedTokenPda({ owner, mint: c.cfg.usdcMint, tokenProgram: TOKEN_PROGRAM });
+  return {
+    user: createNoopSigner(owner),
+    twin: await twins.twin(sym),
+    twinSigner,
+    mint,
+    userTwin,
+    usdcMint: c.cfg.usdcMint,
+    userUsdc,
+    usdcBuffer: await twins.buffer(sym),
+    engineConfig: await engine.config(),
+    engineSigner: await engine.signer(),
+    engineMargin: margin,
+    engineCustody: await engine.custody(shardFor(margin, CUSTODY_COUNT)),
+    engineMarket: await engine.market(t.marketId),
+    fundingState: await engine.funding(t.marketId),
+    priceState: await oracle.price(t.marketId),
+    shard: await engine.shard(t.marketId, shardFor(margin, SHARDS)),
+    position: await engine.position(margin, t.marketId, 'Long'),
+    engineProgram: ENGINE,
+    twinTokenProgram: TOKEN_2022_PROGRAM,
+    usdcTokenProgram: TOKEN_PROGRAM,
+  };
+}
+
+/** Mint as many twins as `budget` USDC buys at the ask (engine fill + its fee
+ *  + the twin fee, never more than the budget). Two transactions: the signed
+ *  price, then the mint against it (one would exceed 1,232 bytes). */
+export async function twinMintIxs(c: LeveretClient, owner: Address, t: TwinProduct, budget: number, slippagePct: number) {
+  const { ixs, quote } = await c.priceIxs(t.marketId);
+  const a = await twinAccounts(c, owner, t);
+  const perTwin = (Number(quote.ask) / 1e8) * (1 + TWIN_COST_BPS / 1e4) * (1 + slippagePct / 100);
+  const count = BigInt(Math.floor((budget / perTwin) * 1e6));
+  if (count <= 0n) throw new Error('The budget is too small for a twin.');
+  return {
+    txs: txs([...(await ensureAta(c, owner, a.mint, TOKEN_2022_PROGRAM)), ...ixs], [tw.getMintInstruction({ ...a, twins: count, maxUsdcIn: toUsdc(budget) })]),
+    twins: count,
+  };
+}
+
+/** Redeem `tokens` at the engine's exit fill (the last close while the
+ *  session is closed). Never gated by a pause. */
+export async function twinRedeemIxs(c: LeveretClient, owner: Address, h: TwinHolding, tokens: bigint, slippagePct: number): Promise<Txs> {
+  const { ixs, quote } = await c.priceIxs(h.product.marketId);
+  const a = await twinAccounts(c, owner, h.product);
+  const ps = await orc.fetchPriceState(c.rpc, a.priceState, CONFIRMED);
+  const px = ps.data.session === orc.Session.Closed && ps.data.lastClose > 0n ? Number(ps.data.lastClose) / 1e8 : Number(quote.bid) / 1e8;
+  const expect = (Number(tokens) / 1e6) * px * (1 - TWIN_COST_BPS / 1e4);
+  return txs(await ensureAta(c, owner, c.cfg.usdcMint, TOKEN_PROGRAM), ixs, [tw.getRedeemInstruction({ ...a, twinsIn: tokens, minUsdcOut: toUsdc(expect * (1 - slippagePct / 100)) })]);
 }

@@ -4,14 +4,14 @@
 // is configured.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { chainConfig } from './config.ts';
-import { type AccountState, DELEGATE_SLOTS, LeveretClient, type LiveMarket, type LivePosition, type LiveTrigger } from './client.ts';
+import { type AccountState, DELEGATE_SLOTS, LeveretClient, type LiveLimit, type LiveMarket, type LivePosition, type LiveTrigger } from './client.ts';
 import type { Address } from '@solana/kit';
 
 /** Dashboard family names → engine tool-mask bits. */
 const TOOL_BIT: Record<string, number> = { Core: 0, Stocks: 1, 'Small Caps': 2, Squared: 3, Factors: 4, Tickets: 5, Twins: 6 };
 import { type ConnectedWallet, type WalletChoice, listWallets, onWalletsChanged } from './wallets.ts';
 import { onchainBySymbol } from '../../data/onchain-markets.ts';
-import { powerBySymbol, ticketBySymbol } from '../../data/onchain-products.ts';
+import { powerBySymbol, ticketBySymbol, twinBySymbol } from '../../data/onchain-products.ts';
 import * as pr from './products.ts';
 import type { SideName } from './pdas.ts';
 
@@ -34,8 +34,8 @@ export function useChain() {
   const [wallet, setWallet] = useState<ConnectedWallet | null>(null);
   const [live, setLive] = useState<Map<string, LiveMarket>>(new Map());
   const [account, setAccount] = useState<AccountState | null>(null);
-  const [products, setProducts] = useState<pr.ProductsState>({ power: new Map(), tickets: new Map() });
-  const [holdings, setHoldings] = useState<pr.Holdings>({ power: [], tickets: [] });
+  const [products, setProducts] = useState<pr.ProductsState>({ power: new Map(), tickets: new Map(), twins: new Map() });
+  const [holdings, setHoldings] = useState<pr.Holdings>({ power: [], tickets: [], twins: [] });
   const [busy, setBusy] = useState('');
   const [feedError, setFeedError] = useState('');
   const walletRef = useRef<ConnectedWallet | null>(null);
@@ -78,7 +78,7 @@ export function useChain() {
   const loadAccount = useCallback(async () => {
     const w = walletRef.current;
     if (!client || !w) {
-      setHoldings({ power: [], tickets: [] });
+      setHoldings({ power: [], tickets: [], twins: [] });
       return setAccount(null);
     }
     try {
@@ -131,7 +131,7 @@ export function useChain() {
     feedError,
     products,
     holdings,
-    isOnchain: (symbol: string) => !!client && (onchainBySymbol.has(symbol) || products.power.has(symbol) || products.tickets.has(symbol)),
+    isOnchain: (symbol: string) => !!client && (onchainBySymbol.has(symbol) || products.power.has(symbol) || products.tickets.has(symbol) || products.twins.has(symbol)),
     async connect(choice: WalletChoice) {
       const w = await choice.connect();
       setWallet(w);
@@ -190,6 +190,14 @@ export function useChain() {
         if (!all.length) return 'none';
         return c.send(w, await c.setDelegateIxs(w.address, all.map((d) => ({ slot: d.slot }))));
       }),
+    /** Limit-open order on Core / Stocks / Factors (margin reserved on-chain). */
+    placeLimit: (symbol: string, a: { side: SideName; marginUsdc: number; leverage: number; limitPx: number; isolated: boolean }) =>
+      run('Placing limit order', async (c, w) => {
+        const m = onchainBySymbol.get(symbol);
+        if (!m) throw new Error(`${symbol} is not listed on-chain yet.`);
+        return c.send(w, await c.placeLimitIxs(w.address, m, a));
+      }),
+    cancelLimit: (l: LiveLimit) => run('Cancelling limit order', async (c, w) => c.send(w, await c.cancelLimitIxs(w.address, l))),
     cancelTrigger: (t: LiveTrigger) => run('Cancelling trigger', async (c, w) => c.send(w, await c.cancelTriggerIxs(w.address, t))),
     close: (p: LivePosition, slippagePct: number) => run('Closing position', async (c, w) => c.send(w, await c.closeIxs(w.address, p, slippagePct))),
     /** Squared long: buy PowerTokens from the QuoteAMM. */
@@ -207,6 +215,10 @@ export function useChain() {
       run('Closing ' + h.product.symbol + ' short', async (c, w) => c.sendAll(w, await pr.shortCloseIxs(c, w.address, h.product, h, account?.usdcBalance ?? 0, slippagePct))),
     ticketBuy: (symbol: string, a: { side: SideName; budget: number; barrier: number; slippagePct: number }) =>
       run('Buying ticket', async (c, w) => c.sendAll(w, (await pr.ticketBuyIxs(c, w.address, need(ticketBySymbol.get(symbol), symbol), a)).txs)),
+    /** Twins: mint at the ask against a 1× engine long; redeem at the exit fill. */
+    twinMint: (symbol: string, usdc: number, slippagePct: number) =>
+      run('Minting ' + symbol, async (c, w) => c.sendAll(w, (await pr.twinMintIxs(c, w.address, need(twinBySymbol.get(symbol), symbol), usdc, slippagePct)).txs)),
+    twinRedeem: (h: pr.TwinHolding, slippagePct: number) => run('Redeeming ' + h.product.symbol, async (c, w) => c.sendAll(w, await pr.twinRedeemIxs(c, w.address, h, h.tokens, slippagePct))),
     ticketSell: (t: pr.LiveTicket, slippagePct: number) => run('Selling ticket back', async (c, w) => c.sendAll(w, await pr.ticketSellIxs(c, w.address, t, slippagePct))),
   };
 }

@@ -8,4 +8,5 @@
 
 export * from "./config.ts";
 export * from "./engineSigner.ts";
+export * from "./order.ts";
 export * from "./trigger.ts";

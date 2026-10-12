@@ -9,6 +9,7 @@
 export * from "./bucketRisk.ts";
 export * from "./engineConfig.ts";
 export * from "./fundingState.ts";
+export * from "./limitOrder.ts";
 export * from "./marginAccount.ts";
 export * from "./market.ts";
 export * from "./marketShard.ts";

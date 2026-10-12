@@ -9,7 +9,7 @@ import { CLUSTER, RPC_URL, devKey } from './lib.ts';
 const QUOTE_API = process.env.LVRT_QUOTE_API ?? 'http://127.0.0.1:8787';
 const usdcMint = (process.env.LVRT_USDC_MINT ?? 'H3tRv17bsBR3ccV5cT9nzt66uqm1wn66tT9rmAiAvrfi') as never;
 
-const cfg = { cluster: CLUSTER, rpcUrl: RPC_URL, quoteApi: QUOTE_API, usdcMint, chain: `solana:${CLUSTER}` as const, testCluster: true };
+const cfg = { cluster: CLUSTER, rpcUrl: RPC_URL, quoteApi: QUOTE_API, usdcMint, chain: `solana:${CLUSTER}` as const, testCluster: true, limitOrders: true };
 const client = new LeveretClient(cfg);
 const kp = await devKey(process.env.LVRT_E2E_KEY ?? 'e2e-trader');
 const wallet: ConnectedWallet = { name: 'e2e', address: kp.address, keypair: kp, signTransaction: async () => { throw new Error('unused'); }, disconnect: async () => {} };

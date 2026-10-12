@@ -14,6 +14,7 @@ export const TICKETS = LVRT_TICKETS_PROGRAM_ADDRESS;
 export const POWER = LVRT_POWER_PROGRAM_ADDRESS;
 export const INSURANCE = 'DwkxsoEc8sQBBqBovGsHBDvrmomdcPqy9aK2zFcUZxhQ' as Address;
 export const FEE_ROUTER = 'GxQSsXZi4uYAieZWyMBvk8c7dBbkKUQWJ5CoHKUHUeQF' as Address;
+export const TWINS = '7Q2Rsett1NBhw6SY2iFMNZbFznoXfkW2msJ3pjJPuzXC' as Address;
 export const GOV = '2CvejCR36zZzmKgtBBP6G9jpVQCwwZ1AUe355t1Bci2E' as Address;
 
 export const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as Address;
@@ -63,6 +64,7 @@ export const engine = {
   margin: (owner: Address, sub = 0) => pda(ENGINE, [text('margin'), addr(owner), Uint8Array.of(sub)]),
   position: (margin: Address, id: number, side: SideName) => pda(ENGINE, [text('pos'), addr(margin), u32(id), Uint8Array.of(SIDE_ID[side])]),
   trigger: (margin: Address, nonce: bigint) => pda(ENGINE, [text('trig'), addr(margin), u64(nonce)]),
+  limit: (margin: Address, nonce: bigint) => pda(ENGINE, [text('limit'), addr(margin), u64(nonce)]),
 };
 
 export const vault = {
@@ -102,6 +104,14 @@ export const power = {
   usdcVault: (id: number) => pda(POWER, [text('custody'), u32(id)]),
   tokenVault: (id: number) => pda(POWER, [text('power'), text('amm'), u32(id)]),
   shortVault: (market: Address, owner: Address) => pda(POWER, [text('short'), addr(market), addr(owner)]),
+};
+
+export const twins = {
+  config: () => pda(TWINS, [text('config')]),
+  twin: (sym: Uint8Array) => pda(TWINS, [text('twin'), sym]),
+  signer: (sym: Uint8Array) => pda(TWINS, [text('twin_signer'), sym]),
+  mint: (sym: Uint8Array) => pda(TWINS, [text('twin_mint'), sym]),
+  buffer: (sym: Uint8Array) => pda(TWINS, [text('custody'), sym]),
 };
 
 /** `shard_for` from lvrt_math: FNV-1a over the margin account's 32 bytes, mod `shards`. */

@@ -26,7 +26,8 @@ import * as fee from "../src/generated/lvrt_fee_router/index.ts";
 import * as insIx from "../src/generated/lvrt_insurance/instructions/index.ts";
 import * as tk from "../src/generated/lvrt_tickets/index.ts";
 import * as pw from "../src/generated/lvrt_power/index.ts";
-import { POWER_MARKETS, TICKET_MARKETS } from "../src/data/onchain-products.ts";
+import * as tw from "../src/generated/lvrt_twins/index.ts";
+import { POWER_MARKETS, TICKET_MARKETS, TWIN_MARKETS, twinSymbolBytes } from "../src/data/onchain-products.ts";
 import { NORM_SCALE, PRICE_SCALE, positionValue, powerIndex } from "../src/lib/chain/product-math.ts";
 import {
   type PriceMsg,
@@ -54,6 +55,7 @@ import {
   SYSTEM_PROGRAM,
   TICKETS,
   TOKEN_2022_PROGRAM,
+  TWINS,
   TOKEN_PROGRAM,
   VAULT,
   engine,
@@ -63,6 +65,7 @@ import {
   programData,
   router,
   tickets,
+  twins,
   vault,
 } from "../src/lib/chain/pdas.ts";
 import {
@@ -672,7 +675,16 @@ async function main() {
         deployer,
       );
       // two signed prices + two Token-2022 instructions exceed one
-      // transaction: mint with the fresh price, then seed against it
+      // transaction: mint with the fresh price, then seed against it.
+      // Stock underlyings are Closed at weekends, when short mints pause.
+      const seedPs = await orc.fetchMaybePriceState(rpc, await oracle.price(p.underlyingId));
+      const isCore = !referenceMarkets.some((r) => r.symbol === p.underlying && r.family !== "Core");
+      const weekend = [0, 6].includes(new Date().getUTCDay());
+      if (!isCore && weekend) {
+        console.log(`  · ${p.symbol} AMM seed skipped: ${p.underlying} is closed at weekends (short mints pause); re-run on a weekday`);
+        void seedPs;
+        continue;
+      }
       await send(
         deployer,
         [
@@ -704,6 +716,61 @@ async function main() {
           }),
         ],
         `${p.symbol} AMM seeded: ${(Number(usdcIn) / 1e6).toLocaleString()} USDC + ${(Number(tokens) / 1e6).toFixed(4)} tokens at ${(Number(index) / 1e8).toFixed(2)} per token`,
+      );
+    }
+  }
+
+  // --------------------------------------------------------------- twins
+  console.log("Twins (lvrt_twins)");
+  if (!(await exists(TWINS))) {
+    console.log("  · skipped: lvrt_twins is not deployed");
+  } else {
+    const twinsConfig = await twins.config();
+    await step(
+      "twins initialize",
+      await exists(twinsConfig),
+      async () => [
+        tw.getInitializeInstruction({
+          payer: deployer,
+          config: twinsConfig,
+          program: TWINS,
+          programData: await programData(TWINS),
+          authority: d,
+          guardian: d,
+        }),
+      ],
+      deployer,
+    );
+    for (const t of TWIN_MARKETS) {
+      const sym = twinSymbolBytes(t.symbol);
+      const twin = await twins.twin(sym);
+      const twinSigner = await twins.signer(sym);
+      await step(
+        `twin ${t.symbol} (1× long on market ${t.marketId})`,
+        await exists(twin),
+        async () => [
+          tw.getCreateTwinInstruction({
+            payer: deployer,
+            authority: deployer,
+            config: twinsConfig,
+            twin,
+            twinSigner,
+            priceState: await oracle.price(t.marketId),
+            engineMarket: await engine.market(t.marketId),
+            mint: await twins.mint(sym),
+            usdcMint: usdcMint.address,
+            usdcBuffer: await twins.buffer(sym),
+            engineMargin: await engine.margin(twinSigner),
+            engineProgram: ENGINE,
+            twinTokenProgram: TOKEN_2022_PROGRAM,
+            usdcTokenProgram: TOKEN_PROGRAM,
+            symbol: sym,
+            marketId: t.marketId,
+            feeBps: 10,
+            holdingFeeThreshold: usdc(1_000),
+          }),
+        ],
+        deployer,
       );
     }
   }
@@ -804,9 +871,16 @@ async function main() {
     if (fresh) {
       // NAV is only fresh right after creation: seed LP capital now
       const lp = await ata(d, await vault.lpMint(b), TOKEN_2022_PROGRAM);
+      // the deployer's test USDC may already have gone into AMM seeds
+      const have = await balanceOf(deployerUsdc);
+      const topUp =
+        have < SEED_LIQUIDITY
+          ? [getMintToInstruction({ mint: usdcMint.address, token: deployerUsdc, mintAuthority: deployer, amount: SEED_LIQUIDITY - have })]
+          : [];
       await send(
         deployer,
         [
+          ...topUp,
           await getCreateAssociatedTokenIdempotentInstructionAsync({
             payer: deployer,
             owner: d,

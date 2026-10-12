@@ -31,6 +31,7 @@ export const markets:Market[]=[
  {symbol:'NVDA-T',name:'NVIDIA knock-out',family:'Tickets',price:183.23,change:2.46,maxLeverage:10,session:'Regular hours',color:'#d9c099',spreadBps:30,carry:.02},
  {symbol:'SOL-T',name:'Solana knock-out',family:'Tickets',price:206.42,change:3.28,maxLeverage:10,session:'24/7',color:'#c8c48f',spreadBps:20,carry:.02},
  {symbol:'lNVDA',name:'NVIDIA Twin',family:'Twins',price:183.23,change:2.46,maxLeverage:1,session:'24/5',color:'#a9c58a',spreadBps:10,carry:.015},
- {symbol:'lSPY',name:'S&P 500 Twin',family:'Twins',price:672.81,change:.72,maxLeverage:1,session:'24/5',color:'#d0c491',spreadBps:10,carry:.011}
+ {symbol:'lSPY',name:'S&P 500 Twin',family:'Twins',price:672.81,change:.72,maxLeverage:1,session:'24/5',color:'#d0c491',spreadBps:10,carry:.011},
+ {symbol:'lSOL',name:'Solana Twin',family:'Twins',price:206.42,change:3.28,maxLeverage:1,session:'24/7',color:'#bfc896',spreadBps:10,carry:.012},
 ];
 export const money=(n:number)=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});

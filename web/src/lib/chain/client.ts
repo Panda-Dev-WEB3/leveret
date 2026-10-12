@@ -71,6 +71,19 @@ export interface LiveTrigger {
   expiry: number;
 }
 
+/** A limit-open order with its margin reserved on-chain. */
+export interface LiveLimit {
+  address: Address;
+  symbol: string;
+  marketId: number;
+  side: SideName;
+  size: number;
+  limitPx: number;
+  leverage: number;
+  reserved: number;
+  expiry: number;
+}
+
 /** An engine delegate slot (MarginAccount.delegates, §11). */
 export interface LiveDelegate {
   slot: number;
@@ -95,6 +108,7 @@ export interface AccountState {
   solBalance: number;
   positions: LivePosition[];
   triggers: LiveTrigger[];
+  limits: LiveLimit[];
   delegates: LiveDelegate[];
 }
 
@@ -170,7 +184,7 @@ export class LeveretClient {
     } catch {
       /* no token account yet */
     }
-    const [positions, triggers] = m.exists ? await Promise.all([this.positions(margin), this.triggers(margin)]) : [[], []];
+    const [positions, triggers, limits] = m.exists ? await Promise.all([this.positions(margin), this.triggers(margin), this.limits(margin)]) : [[], [], []];
     return {
       marginExists: m.exists,
       collateral: m.exists ? Number(m.data.collateral) / USDC_UNIT : 0,
@@ -180,6 +194,7 @@ export class LeveretClient {
       solBalance: Number(sol.value) / 1e9,
       positions,
       triggers,
+      limits,
       delegates: m.exists
         ? m.data.delegates
             .map((d, slot) => ({
@@ -256,6 +271,66 @@ export class LeveretClient {
         expiry: Number(t.expiry),
       };
     });
+  }
+
+  /** Open limit orders of a margin account (the `margin` field sits at offset 8). */
+  async limits(margin: Address): Promise<LiveLimit[]> {
+    const res = await this.rpc
+      .getProgramAccounts(ENGINE, {
+        encoding: 'base64',
+        commitment: 'confirmed',
+        filters: [
+          { memcmp: { offset: 0n, bytes: getBase58Decoder().decode(eng.LIMIT_ORDER_DISCRIMINATOR) as never, encoding: 'base58' } },
+          { memcmp: { offset: 8n, bytes: margin as never, encoding: 'base58' } },
+        ],
+      })
+      .send();
+    const dec = eng.getLimitOrderDecoder();
+    const bySymbol = new Map(ONCHAIN_MARKETS.map((x) => [x.id, x.symbol]));
+    return res.map(({ pubkey, account }) => {
+      const o = dec.decode(getBase64Encoder().encode(account.data[0]));
+      return {
+        address: pubkey,
+        symbol: bySymbol.get(o.marketId) ?? `#${o.marketId}`,
+        marketId: o.marketId,
+        side: (o.side === eng.Side.Long ? 'Long' : 'Short') as SideName,
+        size: Number(o.size) / BASE_UNIT,
+        limitPx: Number(o.limitPx) / PRICE,
+        leverage: o.leverageX100 / 100,
+        reserved: Number(o.reserved) / USDC_UNIT,
+        expiry: Number(o.expiry),
+      };
+    });
+  }
+
+  /** Limit-open order: the margin is reserved now; a keeper fills it through the open path once the price is through the limit. */
+  async placeLimitIxs(owner: Address, m: OnchainMarket, a: { side: SideName; marginUsdc: number; leverage: number; limitPx: number; isolated: boolean }) {
+    const signer = createNoopSigner(owner);
+    const margin = await engine.margin(owner);
+    const nonce = BigInt(Date.now()) * 1000n;
+    const size = BigInt(Math.floor(((a.marginUsdc * a.leverage) / a.limitPx) * BASE_UNIT));
+    if (size <= 0n) throw new Error('Size too small for this limit price.');
+    return [
+      ...(await this.ensureMargin(owner, signer)),
+      eng.getPlaceLimitInstruction({
+        signer,
+        margin,
+        market: await engine.market(m.id),
+        order: await engine.limit(margin, nonce),
+        nonce,
+        side: a.side === 'Long' ? eng.Side.Long : eng.Side.Short,
+        size,
+        limitPx: BigInt(Math.round(a.limitPx * PRICE)),
+        leverageX100: Math.round(a.leverage * 100),
+        isolatedMargin: a.isolated ? BigInt(Math.round(a.marginUsdc * USDC_UNIT)) : 0n,
+        expiry: BigInt(Math.floor(Date.now() / 1000) + 30 * 86_400),
+        keeperBounty: BigInt(0.1 * USDC_UNIT),
+      }),
+    ];
+  }
+
+  async cancelLimitIxs(owner: Address, l: LiveLimit): Promise<Instruction[]> {
+    return [eng.getCancelLimitInstruction({ signer: createNoopSigner(owner), margin: await engine.margin(owner), order: l.address, owner })];
   }
 
   /** TP / SL triggers for a position; executed by any keeper through the same fill path. */
