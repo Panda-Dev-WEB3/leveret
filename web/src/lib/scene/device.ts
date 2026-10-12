@@ -49,7 +49,8 @@ export const clampedPixelRatio = (tier: DeviceTier = deviceTier()): number => {
   const dpr = window.devicePixelRatio || 1;
   if (tier === "mobile") return Math.min(dpr, 1);
   if (tier === "tablet") return Math.min(Math.max(dpr, 0.75), 1.25);
-  return Math.min(Math.max(dpr, 0.75), 1.5);
+  // 1.5 doubled the fill cost of 1.25 for a difference few screens show
+  return Math.min(Math.max(dpr, 0.75), 1.25);
 };
 
 /**
@@ -60,8 +61,13 @@ export const clampedPixelRatio = (tier: DeviceTier = deviceTier()): number => {
 export const frameBudgetMs = (tier: DeviceTier = deviceTier()): number => {
   if (tier === "mobile") return 1000 / 30 - 1;
   if (tier === "tablet") return 1000 / 45 - 1;
-  return 0;
+  // capped at 60 fps: on 120–144 Hz displays an uncapped loop doubled the GPU load
+  return 1000 / 60 - 1;
 };
+
+/** One tier lighter, or null at the bottom. */
+export const lighterTier = (tier: DeviceTier): DeviceTier | null =>
+  tier === "desktop" ? "tablet" : tier === "tablet" ? "mobile" : null;
 
 export const prefersReducedMotion = (): boolean =>
   typeof window !== "undefined" &&

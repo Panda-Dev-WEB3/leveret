@@ -26,6 +26,7 @@ import {
   deviceTier,
   frameBudgetMs,
   isCoarsePointer,
+  lighterTier,
   sceneShouldFreeze,
   wantsPointer,
   type DeviceTier,
@@ -67,6 +68,20 @@ export interface GrassFieldProps {
 
 /** Frames kept drawing after the entrance before a freeze-tier scene stops. */
 const FREEZE_SETTLE_MS = 1200;
+
+/**
+ * Adaptive quality. The tier comes from the viewport, not the GPU, so a
+ * laptop with integrated graphics starts on the desktop budget. Rendered-frame
+ * intervals are sampled after a warm-up; while the median is slower than
+ * ADAPT_MIN_FPS the scene steps down a tier (fewer blades, MSAA, bloom, DPR),
+ * and at the bottom tier below FREEZE_FPS it holds the last frame instead.
+ */
+const ADAPT_WARMUP_MS = 2500;
+const ADAPT_SAMPLES = 90;
+const ADAPT_MIN_FPS = 40;
+const FREEZE_FPS = 24;
+/** Gaps longer than this are pauses (tab hidden, offscreen), not slow frames. */
+const ADAPT_MAX_GAP_MS = 250;
 /** How long the reveal gust takes to die away (attack + ~3 × calm). */
 const GUST_SETTLE_MS = 8000;
 
@@ -153,6 +168,10 @@ export function GrassField({
 
     /* -------------------------------------------------------------- tiers */
 
+    // the lightest tier adaptive quality has stepped down to, if any
+    let ceiling: DeviceTier | null = null;
+    const RANK: Record<DeviceTier, number> = { mobile: 0, tablet: 1, desktop: 2 };
+    const capTier = (t: DeviceTier): DeviceTier => (ceiling && RANK[ceiling] < RANK[t] ? ceiling : t);
     let budget = frameBudgetMs(tier);
     freezeRef.current = sceneShouldFreeze(tier);
     const retune = (nextTier: DeviceTier): void => {
@@ -178,7 +197,7 @@ export function GrassField({
       lastWidth = width;
       lastHeight = height;
       if (heightOnly && isCoarsePointer()) return;
-      const nextTier = deviceTier();
+      const nextTier = capTier(deviceTier());
       if (nextTier !== tier) retune(nextTier);
       else scene.resize();
     };
@@ -208,6 +227,28 @@ export function GrassField({
     );
     observer.observe(canvas);
 
+    let startedAt = performance.now();
+    let lastFrame = 0;
+    const intervals: number[] = [];
+    const adapt = (now: number): void => {
+      const gap = now - lastFrame;
+      lastFrame = now;
+      if (now - startedAt < ADAPT_WARMUP_MS || gap > ADAPT_MAX_GAP_MS) return;
+      intervals.push(gap);
+      if (intervals.length < ADAPT_SAMPLES) return;
+      const sorted = [...intervals].sort((x, y) => x - y);
+      const fps = 1000 / sorted[sorted.length >> 1];
+      intervals.length = 0;
+      const lighter = lighterTier(tier);
+      if (fps < ADAPT_MIN_FPS && lighter) {
+        ceiling = lighter;
+        retune(lighter);
+        startedAt = now; // let the new budget settle before judging it
+      } else if (fps < FREEZE_FPS && !lighter) {
+        freezeRef.current = true;
+      }
+    };
+
     const unsubscribe = subscribeToTicker(
       () => {
         if (document.hidden || !onScreen || !activeRef.current) return;
@@ -222,6 +263,7 @@ export function GrassField({
           return;
         }
         scene.render();
+        adapt(performance.now());
       },
       () => budget,
     );
