@@ -114,6 +114,19 @@ pub mod lvrt_engine {
         instructions::trigger::handle_execute_trigger(ctx)
     }
 
+    /// Limit-open order: reserves its margin now, fills later through the open path.
+    pub fn place_limit(ctx: Context<PlaceLimit>, nonce: u64, args: LimitArgs) -> Result<()> {
+        instructions::limit::handle_place_limit(ctx, nonce, args)
+    }
+
+    pub fn cancel_limit(ctx: Context<CancelLimit>) -> Result<()> {
+        instructions::limit::handle_cancel_limit(ctx)
+    }
+
+    pub fn execute_limit(ctx: Context<ExecuteLimit>) -> Result<()> {
+        instructions::limit::handle_execute_limit(ctx)
+    }
+
     // ---- risk
 
     pub fn liquidate<'info>(ctx: Context<'info, Liquidate<'info>>) -> Result<()> {

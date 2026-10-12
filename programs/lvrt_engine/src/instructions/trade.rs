@@ -88,24 +88,63 @@ pub struct OpenPosition<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handle_open_position(mut ctx: Context<OpenPosition>, args: OpenArgs) -> Result<()> {
+/// The accounts the open fill path reads and writes, shared by user opens
+/// and keeper-executed limit orders.
+pub struct OpenAccounts<'a> {
+    pub config: &'a EngineConfig,
+    pub margin_key: Pubkey,
+    pub margin: &'a mut MarginAccount,
+    pub market: &'a Market,
+    pub funding_state: &'a FundingState,
+    pub price_state: &'a PriceState,
+    pub shard: &'a mut MarketShard,
+    pub position: &'a mut Position,
+    pub position_bump: u8,
+}
+
+pub fn handle_open_position(ctx: Context<OpenPosition>, args: OpenArgs) -> Result<()> {
     let clock = Clock::get()?;
+    let signer = ctx.accounts.signer.key();
+    let position_bump = ctx.bumps.position;
+    let a = ctx.accounts;
+    let margin_key = a.margin.key();
+    open_core(
+        OpenAccounts {
+            config: &a.config,
+            margin_key,
+            margin: &mut a.margin,
+            market: &a.market,
+            funding_state: &a.funding_state,
+            price_state: &a.price_state,
+            shard: &mut a.shard,
+            position: &mut a.position,
+            position_bump,
+        },
+        args,
+        Some(&signer),
+        &clock,
+    )
+}
+
+/// Steps 1–6 of the fill path for an open. `actor` is authorized against the
+/// margin account (owner or delegate); `None` when the owner already
+/// authorized it, e.g. a limit order placed earlier and executed by a keeper.
+pub fn open_core(mut o: OpenAccounts, args: OpenArgs, actor: Option<&Pubkey>, clock: &Clock) -> Result<()> {
     let now = clock.unix_timestamp;
-    let a = &mut ctx.accounts;
-    let market = &a.market;
-    let ps = &a.price_state;
-    let fs = &a.funding_state;
+    let market = o.market;
+    let ps = o.price_state;
+    let fs = o.funding_state;
     require!(args.size > 0, EngineError::InvalidParams);
 
     // 1–2. fresh verified price, LIVE, session allows the family, band inside limit
-    require!(!a.config.opens_paused, EngineError::OpensPaused);
+    require!(!o.config.opens_paused, EngineError::OpensPaused);
     require!(!market.reduce_only, EngineError::ReduceOnly);
     require!(ps.status == PriceStatus::Live, EngineError::PriceNotLive);
-    require!(now_ms(&clock) - ps.ts_ms <= market.fresh_ms, EngineError::StalePrice);
+    require!(now_ms(clock) - ps.ts_ms <= market.fresh_ms, EngineError::StalePrice);
     require!(ps.band_bps <= market.risk.band_limit_bps, EngineError::BandTooWide);
     let off_lev = market.risk.off_hours_lev_x100 as i64;
     require!(risk::opens_allowed(market.family.math(), ps.session.math(), off_lev), EngineError::SessionClosed);
-    require!(a.position.size == 0 || a.position.ca_epoch == market.ca.epoch, EngineError::CorporateActionPending);
+    require!(o.position.size == 0 || o.position.ca_epoch == market.ca.epoch, EngineError::CorporateActionPending);
 
     // 3. fill price: max(ask, mid·(1+spread)) / min(bid, mid·(1−spread)) with skew premium
     let fill = pricing::fill_price(
@@ -134,30 +173,32 @@ pub fn handle_open_position(mut ctx: Context<OpenPosition>, args: OpenArgs) -> R
     require!((args.leverage_x100 as i64) <= max_lev, EngineError::LeverageTooHigh);
 
     let n = notional(args.size as i64, fill.price).m()?.unsigned_abs();
-    authorize(&mut a.margin, &a.signer.key(), family_tool_bit(market.family), n, now)?;
+    if let Some(actor) = actor {
+        authorize(o.margin, actor, family_tool_bit(market.family), n, now)?;
+    }
 
     // OI cap (conservative between merges) and per-account limit; guarded = half caps
     let (agg, delta, cap) = match args.side {
-        Side::Long => (fs.oi_long, a.shard.delta_long_since_merge, market.risk.oi_cap_long),
-        Side::Short => (fs.oi_short, a.shard.delta_short_since_merge, market.risk.oi_cap_short),
+        Side::Long => (fs.oi_long, o.shard.delta_long_since_merge, market.risk.oi_cap_long),
+        Side::Short => (fs.oi_short, o.shard.delta_short_since_merge, market.risk.oi_cap_short),
     };
     let cap = risk::guarded_cap(cap as i64, market.guarded);
     let bound = shard::oi_upper_bound(agg as i64, delta as i64, market.shards).m()?;
     require!(bound + args.size as i64 <= cap, EngineError::OiCap);
     let pos_cap = risk::guarded_cap(market.risk.max_position_notional as i64, market.guarded) as u64;
-    require!(a.position.entry_notional + n <= pos_cap, EngineError::PositionLimit);
+    require!(o.position.entry_notional + n <= pos_cap, EngineError::PositionLimit);
 
     // margin after fee
-    let fee = logic::fee_for(market, &a.margin, n as i64)?;
+    let fee = logic::fee_for(market, &o.margin, n as i64)?;
     let im = mm::initial_margin(n as i64, args.leverage_x100 as i64).m()? as u64;
-    let is_new = a.position.size == 0;
+    let is_new = o.position.size == 0;
     if is_new {
-        require!(a.margin.open_positions < MAX_POSITIONS_PER_ACCOUNT, EngineError::TooManyPositions);
+        require!(o.margin.open_positions < MAX_POSITIONS_PER_ACCOUNT, EngineError::TooManyPositions);
     } else {
-        require!((a.position.isolated_margin > 0) == (args.isolated_margin > 0), EngineError::InvalidParams);
-        settle_carry(&mut a.position, fs, &mut a.margin, &mut a.shard)?;
+        require!((o.position.isolated_margin > 0) == (args.isolated_margin > 0), EngineError::InvalidParams);
+        settle_carry(&mut o.position, fs, &mut o.margin, &mut o.shard)?;
     }
-    let m = &mut a.margin;
+    let m = &mut o.margin;
     if args.isolated_margin > 0 {
         require!(args.isolated_margin >= im, EngineError::InsufficientMargin);
         require!(m.collateral >= (args.isolated_margin + fee) as i64, EngineError::InsufficientMargin);
@@ -170,16 +211,16 @@ pub fn handle_open_position(mut ctx: Context<OpenPosition>, args: OpenArgs) -> R
     }
 
     // 6. write Position, MarginAccount, MarketShard
-    let p = &mut a.position;
+    let p = &mut o.position;
     if is_new {
-        p.margin = m.key();
+        p.margin = o.margin_key;
         p.market_id = market.market_id;
         p.side = args.side;
         p.entry_funding_index = fs.index;
         p.entry_borrow_index = fs.borrow_index;
         p.ca_epoch = market.ca.epoch;
-        p.shard = a.shard.index;
-        p.bump = ctx.bumps.position;
+        p.shard = o.shard.index;
+        p.bump = o.position_bump;
         m.open_positions += 1;
     }
     let new_size = p.size + args.size;
@@ -194,7 +235,7 @@ pub fn handle_open_position(mut ctx: Context<OpenPosition>, args: OpenArgs) -> R
         p.im_reserved += im;
     }
 
-    let s = &mut a.shard;
+    let s = &mut o.shard;
     match args.side {
         Side::Long => {
             s.oi_long += args.size;
@@ -211,7 +252,7 @@ pub fn handle_open_position(mut ctx: Context<OpenPosition>, args: OpenArgs) -> R
 
     emit!(FillEvent {
         market_id: market.market_id,
-        margin: m.key(),
+        margin: o.margin_key,
         side: args.side,
         is_open: true,
         size: args.size,

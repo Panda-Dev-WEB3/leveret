@@ -268,6 +268,27 @@ pub struct Trigger {
     pub bump: u8,
 }
 
+/// A limit-open order with its margin reserved (§3.3 fill path at execution).
+#[account]
+#[derive(InitSpace)]
+pub struct LimitOrder {
+    pub margin: Pubkey,
+    pub owner: Pubkey,
+    pub market_id: u32,
+    pub side: Side,
+    pub size: u64,
+    pub limit_px: i64,
+    pub leverage_x100: u32,
+    pub isolated_margin: u64,
+    pub expiry: i64,
+    /// Fixed keeper bounty (USDC), paid by the owner on execution.
+    pub keeper_bounty: u64,
+    /// Moved out of free collateral at placement: IM + max fee + bounty.
+    pub reserved: u64,
+    pub nonce: u64,
+    pub bump: u8,
+}
+
 #[event]
 pub struct FillEvent {
     pub market_id: u32,
