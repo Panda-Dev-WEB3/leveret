@@ -1,336 +1,243 @@
-# Leveret ($LVRT) — on-chain skeleton
+<div align="center">
 
-Every way to trade a price, on one Solana margin account. This repo is the
-first build pass of the two specs (`Leveret Overview.pdf`,
-`Leveret Backend.pdf`): **all 10 Anchor programs**, with shared math and the
-core trading path implemented and tested, and the remaining surface stubbed
-behind explicit `TODO(<program>)` markers that return `NotImplemented`.
+<img src=".github/assets/logo.webp" alt="Leveret logo" width="128" height="128">
 
-Toolchain: Anchor **1.1.2** (CLI and `anchor-lang` pinned `=1.1.2`), Agave
-3.1.10, Rust 1.89 for programs (`rust-toolchain.toml`), platform-tools v1.52,
-LiteSVM 0.10 for tests.
+# Leveret
 
-## Layout
+### Every price. One account.
 
-```
-crates/
-  lvrt_math/      pure fixed-point math (no Solana deps): oracle aggregation,
-                  fill price + skew premium, velocity funding, borrow, margin,
-                  liquidation sizing, anti-staleness, circuit breaker, splits,
-                  dividends, power/normFactor, tickets, factor index, vault NAV,
-                  fee split, risk classes, sharding
-  lvrt_common/    shared on-chain types: USDC mint, seeds, Family/Bucket/
-                  Session/PriceStatus/Side, Ed25519 introspection + PriceMsg,
-                  upgrade-authority guard, tighten-only guard
-programs/
-  lvrt_gov        Squads → queue → 72h → execute (executor PDA signs), guardian cancel
-  lvrt_oracle     signed-report verification, Core median / Stocks primary+confirm /
-                  enclave aggregation, PriceState, calendar, gap protocol, receipts
-  lvrt_engine     margin accounts, delegates, sharded OI, one-tx fills, funding/borrow
-                  merge crank, liquidation, TP/SL triggers, limit orders, corporate actions
-  lvrt_vault      per-family LLP buckets (Token-2022 LP mint), NAV mint/redeem,
-                  48h queue, engine-only settlement
-  lvrt_insurance  per-bucket fund, staked $LVRT tranche, engine-only shortfall cover
-  lvrt_fee_router 80/10/5/5 split with the 20%→5% insurance carve-out
-  lvrt_power      Squared: S² index, normFactor funding, QuoteAMM (oracle band),
-                  ShortVault mint/burn, splits
-  lvrt_factor     factor registry, enclave-signed publishes, 30-day methodology timelock
-  lvrt_tickets    knock-out tickets: pricing, stress budget, lazy financing roll,
-                  knock-out by live price or late signed report, gifts
-  lvrt_twins      Twins: mint / redeem through a 1× engine long, solvency view
-tests/            LiteSVM harness + integration tests
-scripts/wsl-build.sh
-keys/             program keypairs (git-ignored; back these up)
-```
+Every way to trade a price, on one Solana margin account.
 
-## Website (`web/`)
+[![Solana](https://img.shields.io/badge/Solana-Agave%203.1-9945FF?logo=solana&logoColor=white)](https://solana.com/)
+[![Anchor](https://img.shields.io/badge/Anchor-1.1.2-512BD4)](https://www.anchor-lang.com/)
+[![Rust](https://img.shields.io/badge/Rust-1.89-000000?logo=rust&logoColor=white)](rust-toolchain.toml)
+[![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white)](web/package.json)
+[![Tests](https://img.shields.io/badge/tests-102%20passing-2ea44f)](#testing)
+[![Network](https://img.shields.io/badge/network-Solana%20devnet-14F195)](https://leveret.net/dashboard/)
+[![Status](https://img.shields.io/badge/status-devnet-orange)](#disclaimer)
 
-Next.js 16 static export (React 19, Tailwind 4, three.js hero): marketing
-pages for the seven families plus a `/dashboard` workspace. Live on devnet at
-**https://leveret.net** (VPS: `scripts/vps/` — `install.sh` for the first
-install, `deploy-site.sh` for a new site release, `deploy-app.sh` for the dev
-oracle's code; keys are never part of either update).
+[Website](https://leveret.net) · [Dashboard](https://leveret.net/dashboard/) · [Protocol](https://leveret.net/protocol/) · [Docs](#documentation)
 
-The three.js hero adapts to the GPU: it starts at the viewport's tier, samples
-frame times after a warm-up, steps down a tier (blades, MSAA, bloom, DPR) while
-the median is under 40 fps, and holds a still frame below 24 fps at the bottom
-tier; desktop is capped at 60 fps and DPR 1.25. Fonts ship as WOFF2.
+</div>
 
-With `NEXT_PUBLIC_CLUSTER` set (see `web/.env.example`) the dashboard is wired
-to the programs through `@solana/kit` and typed clients generated from the
-IDLs (`npm run codegen` → `web/src/generated/`):
+<p align="center">
+  <img src=".github/assets/banner.webp" alt="Leveret: every price, one account" width="100%">
+</p>
 
-- **Wallets** via the Wallet Standard (Phantom, Solflare, Backpack); unsigned
-  transaction bytes go to the wallet, signed bytes come back. A burner test
-  wallet exists on localnet only.
-- **Live prices**: the latest oracle-signed quote (what a trade embeds) and
-  the on-chain PriceState status / session.
-- **Margin account**: balance, wallet USDC / SOL, positions with live mark and
-  P&L, exposure by family, utilization.
-- **Signed actions**: deposit (creates the margin account), withdraw (with
-  fresh prices + health accounts), open (`[Ed25519 verify][post_prices]
-  [open_position]` in one transaction, slippage-bounded), close, TP/SL
-  triggers (placed after the open, listed and cancellable in Orders), limit
-  orders (margin reserved on-chain, filled by a keeper through the open path,
-  cancellable; `NEXT_PUBLIC_LIMIT_ORDERS=1` once the cluster's engine has
-  them), agent
-  policies as on-chain engine delegates (authorize / revoke / revoke-all kill
-  switch; withdraw permission never set), test-USDC faucet on test clusters.
-- **Squared** (`lvrt_power`): live index value per PowerToken (S² × nf) and
-  on-chain daily carry. Long = buy PowerTokens from the QuoteAMM inside the
-  oracle band, sell back from the positions table. Short = mint in a
-  ShortVault against margin plus the sale proceeds (~205% of debt) and sell
-  the tokens; close buys the debt back, burns it and returns the collateral.
-- **Tickets** (`lvrt_tickets`): budget-capped buy (the price paid, never more
-  than the budget, is the maximum loss) at a chosen knock-out level; holdings
-  show the rolled barrier, live value and leverage; sell back in session.
-- **Twins** (`lvrt_twins`): mint for a USDC budget at the ask (two
-  signatures: the signed quote, then the mint), holdings at the live
-  underlying price, redeem at the exit fill. lSOL is listed alongside the
-  stock twins so they can be tried at weekends.
-- Small Caps and ratio markets (NVDA/AMD) keep the original
-  prepare-a-draft flow, labelled as such.
+> [!IMPORTANT]
+> **Devnet only, unaudited.** Leveret runs on Solana devnet with test USDC and no real funds. It is a first
+> build pass of the protocol spec: the trading paths are implemented and tested, but the programs have not been
+> audited, and some surfaces are still marked `TODO` (see [Roadmap](#roadmap)).
 
-Without `NEXT_PUBLIC_CLUSTER` it stays the offline reference dashboard.
+## What is Leveret
 
-```bash
-cd web && npm ci && npm run build && npm run preview   # http://127.0.0.1:3000
-```
+Leveret puts seven ways of trading a price behind **one USDC account** on Solana: crypto, US stocks, small caps,
+squared exposure, factor baskets, knock-out tickets and stock twins. Every fill is priced by a **signed oracle
+report verified inside the same transaction**, and each family has its own liquidity and insurance bucket, so
+risk in one never spills into another.
 
-Requires Node ≥ 22.12. npm 11 blocks the `sharp` / `unrs-resolver` install
-scripts by default; neither is needed (images are unoptimized in the static
-export and ESLint isn't part of the build). When hosting `web/out` anywhere
-other than Vercel, rewrite `**/__next.<seg>.<rest>.txt` →
-`**/__next.<seg>/<rest>.txt` (Next 16 prefetch payloads; `scripts/preview.mjs`
-does this locally) — without it client-side navigation falls back to full page
-loads.
-
-## Test clusters
-
-Programs for localnet / devnet are built with `--features devnet`, which swaps
-the hard-coded USDC mint for a Leveret test mint
-(`H3tRv17bsBR3ccV5cT9nzt66uqm1wn66tT9rmAiAvrfi`, key in `keys/`) so the dev
-faucet can mint. Mainnet builds never include it.
-
-```bash
-# in WSL
-scripts/wsl-build.sh devnet                  # -> target/deploy-devnet
-scripts/localnet.sh                          # validator with all 10 programs, upgradeable
-# on Windows / anywhere with Node >= 24
-LVRT_CLUSTER=localnet node web/dev/bootstrap.ts   # idempotent: mints, feeds, markets, shards, LLP…
-LVRT_CLUSTER=localnet node web/dev/oracle.ts      # quotes, faucet, push/merge, TP/SL + limit + knock-out keepers, AMM arb
-LVRT_CLUSTER=localnet node web/dev/e2e.ts         # headless deposit → open → close → withdraw
-LVRT_CLUSTER=localnet node web/dev/e2e-products.ts  # SOL² long + short round trips, SOL-T buy → sell back, lSOL mint → redeem
-LVRT_CLUSTER=localnet node web/dev/e2e-limit.ts     # limit order: reserve + cancel, keeper fill under the limit, close
-```
-
-`web/dev/oracle.ts` stands in for the oracle-pusher, merge-cranker and
-trigger-exec services on test clusters: it random-walks prices from the
-dashboard's reference values, signs them with the registered pusher / enclave
-keys, serves `GET /quotes`, `GET /quote/<id>`, `POST /faucet`, posts every feed
-on-chain and merges shards periodically, executes TP/SL triggers and limit
-orders, knocks out
-tickets with signed evidence, and arbitrages the Squared QuoteAMMs back to
-their index (the index moves ~2× the underlying, so an unattended pool leaves
-its ±1% band within the hour; the arb mints through its own ShortVault at
-220% or buys and burns, like a real arbitrageur would). Test
-clusters use a 60 s quote freshness window (mainnet: 800 ms / 2 s) because
-wallets take seconds to approve and devnet can't afford a sub-second pusher.
-
-**Devnet status:** `lvrt_oracle`, `lvrt_engine`, `lvrt_vault`,
-`lvrt_insurance`, `lvrt_fee_router`, `lvrt_power`, `lvrt_tickets` and
-`lvrt_twins` are deployed (upgrade authority `2FmzTtbkyfsrqgZ6jhLaTYmKVSyLQvzH52tR76MQzukG`)
-and bootstrapped: all 13 markets; the Core / Stocks / Factors LLP buckets
-(seeded with test USDC), insurance funds and fee inboxes; NVDA², SPY² and
-SOL² QuoteAMMs seeded with 250k test USDC each against ShortVault-backed
-tokens; NVDA-T and SOL-T ticket markets on a 500k vault; lNVDA, lTSLA, lSPY,
-lQQQ, lCOIN and lSOL twins. Trading, deposits, withdrawals, Squared longs and
-shorts, tickets and twin mint / redeem work end to end (stock underlyings are
-Closed at weekends, so use SOL² / SOL-T / lSOL then). Squared and Twins
-transactions are split in two or three when two signed prices plus two
-Token-2022 instructions would exceed 1,232 bytes. Deploying costs the program's rent only: the write buffer is folded into
-the program account. The public devnet RPC rate-limits bursts; the client
-retries HTTP 429 with backoff (`web/src/lib/chain/rpc.ts`), and the dashboard
-and dev keepers poll devnet less often than localnet.
-
-## Build and test
-
-Programs build in WSL (Ubuntu 24.04). The script mirrors the repo to
-`~/leveret-build` (native ext4 is much faster than `/mnt/d`), builds there and
-copies `.so` + IDL back to `target/`.
-
-```bash
-wsl -d Ubuntu-24.04 -- bash /mnt/d/Sermium/Leveret/scripts/wsl-build.sh test
-```
-
-`check` (fast type-check), `build` (SBF + IDL) and `test` (build, then
-`lvrt_math` unit tests and the LiteSVM suite) are the three modes. The math
-crate also runs natively on Windows: `cargo test -p lvrt_math`.
-
-## What the tests cover
-
-`lvrt_math` (56 unit tests) — including the §14 fixture *a power-market
-split keeps every long's value unchanged to 1e-9* (4:1, 1:10, 3:2).
-
-LiteSVM integration (`tests/tests/*.rs`, 46 tests):
-
-| Test | Spec rule |
-|---|---|
-| `initialize_requires_upgrade_authority` | no front-running of one-shot inits |
-| `oracle_needs_two_agreeing_sources_for_live` | §2.3 median, outlier drop, WIDE |
-| `halt_then_resume_applies_gap_protocol` | §6.2 band ≥ 2× normal for 10 min, `at_open` |
-| `unregistered_signer_is_rejected` | §2.1 registered keys only |
-| `one_transaction_open_and_close_with_profit` | §3.3 fill path, exact fill/fee/PnL; §1 CU budget (open ≈ 47k, close ≈ 38k CU incl. a 2-source oracle post, budget 300k) |
-| `anti_staleness_edge_haircuts_quick_round_trips` | §3.3 3× spread hurdle < 10 s |
-| `pause_blocks_opens_but_never_exits` | design rule 3, guardian tighten-only |
-| `wide_and_stale_prices_block_opens_but_not_closes` | design rule 1 |
-| `leverage_and_slippage_limits` | §3.3 step 4–5 |
-| `partial_then_full_liquidation` | §3.5 25% / 100% close, bounty |
-| `withdraw_checks_health_and_is_never_paused` | cross health, exits open |
-| `merge_aggregates_shards_and_accrues_funding` | §3.2 merge, §3.4 velocity funding + borrow, 24h signer-key expiry/rotation |
-| `timelock_executes_only_after_72h` | §12 timelock, guardian cancel |
-| `losing_trader_pays_bucket_carry_and_fees` | settlement: fees → inbox, loss + carry → bucket, custody == Σ ledgers |
-| `winning_trader_is_paid_by_bucket_and_can_withdraw_everything` | settlement: bucket pays winners; profit is withdrawable |
-| `bad_debt_is_covered_by_the_insurance_fund` | §3.5 loss waterfall: insurance makes the bucket whole |
-| `uncovered_bad_debt_falls_on_the_bucket` | waterfall with an empty fund |
-| `settlement_rejects_a_custody_that_cannot_cover_it` | custody shard selection |
-| `adl_is_refused_while_the_bucket_is_healthy` | §3.5 ADL only past the trigger |
-| `adl_closes_top_rank_first_and_stops_at_target` | ADL at the mark, partial close to target, bucket still pays winners |
-| `ranks_within_a_round_must_not_increase` | ADL ordering |
-| `adl_guards` | operator only, all bucket markets, winners only, fresh merges |
-| `bad_debt_slashes_the_tranche_pro_rata_before_nav` | §5 tranche: pro-rata slash at TWAP, NAV kept whole via receivable |
-| `escrowed_lvrt_sells_into_the_bucket` | slashed $LVRT sold at the recovery price, receivable settled |
-| `slashing_needs_a_fresh_twap` | TWAP freshness, refresh + settle in one tx |
-| `a_tranche_smaller_than_the_loss_is_wiped_and_the_rest_hits_nav` | full wipe, share epoch reset, remainder to NAV |
-| `unstake_after_cooldown_pays_the_post_slash_amount_and_rewards_are_claimable` | 14-day cooldown still slashable, rewards per share |
-| `distribute_credits_the_vault_and_insurance_ledgers` | fee split moves ledgers with tokens; LP share accrues to NAV; stakers can claim |
-| `staker_share_joins_the_fund_when_nobody_stakes` | no stranded staker share |
-| `operator_share_comes_out_of_the_lp_remainder` | oracle-operator share, 20% cap, timelock only |
-| `only_the_fee_router_can_credit_ledgers` | ledger credits are router-PDA only |
-| `late_crossing_report_knocks_the_ticket_out` | §14 fixture |
-| `buy_prices_the_ticket_and_enforces_distance` | §9 price, 3% minimum distance |
-| `evidence_from_before_issue_is_rejected` | §9 knock-out evidence window |
-| `shorts_seed_the_amm_and_longs_round_trip_inside_the_band` | §7 ShortVault-backed seed (mispriced seed refused), AMM buy, slippage, sell at the floor after an index move |
-| `buys_above_the_band_route_to_the_short_vault` | §7 buys over `I(1 + b)` refused |
-| `short_vault_mints_at_200_and_burns_back_to_zero` | §7 200% mint, 150% maintenance on withdraw, full burn |
-| `mint_opens_a_1x_long_and_redeem_pays_the_exit_fill` | §10 mint at the engine fill + fees (cap enforced), 1× backing, partial and full redeem at the exit fill |
-| `a_quick_round_trip_bears_its_own_haircut` | §10 payout capped at what the slice released; remaining holders stay backed |
-| `redemption_is_never_gated_by_a_pause` | §10 opens paused → mint refused, redeem still pays |
-| `only_the_authority_creates_twins` | timelock authority only |
-| `a_buy_limit_reserves_margin_and_fills_only_through_the_limit` | reserve taken at placement (not withdrawable), no fill above the limit, keeper fill + bounty + rent |
-| `a_sell_limit_fills_only_at_or_above_its_price` | sell side bound |
-| `cancel_returns_the_reserve_and_expiry_frees_it_for_anyone` | owner cancel, stranger refused before expiry, expired orders don't fill and anyone can clear them |
-| `a_limit_needs_free_margin_for_its_reserve` | placement needs free margin for IM + fee + bounty |
-
-## Status per program
-
-| Program | Implemented | TODO (returns `NotImplemented` or noted) |
+| Family | What you trade | On devnet |
 |---|---|---|
-| gov | init (upgrade-authority gated), queue, cancel, execute via `invoke_signed`, self-admin, replay guard | — |
-| oracle | signer registry (attestation hash, expiry), feeds with depth gate + ≥2 sources, Ed25519 introspection, aggregation per family, calendar override, gap protocol, `at_open`, guardian tighten-only status, receipt roots + Merkle verify | Chainlink verifier CPI, Switchboard Surge verification (both enter via registered pusher keys meanwhile) |
-| engine | everything in the fill path, cross/isolated margin, limit orders (reserved margin, keeper fill via the shared `open_core`), delegates with budgets, deposit/withdraw (USDC only), circuit-breaker queue, liquidation, TP/SL, shard merge + funding + borrow, split/dividend crank, tighten-only risk setters, `settle_shard` (fees → fee router, net PnL + carry ↔ bucket, bad debt → insurance → staked tranche), ADL | USDT→USDC Jupiter deposit, trigger re-pricing on splits |
-| vault | buckets, LP mint, NAV deposit/redeem ±5 bps, dead shares, 48h queue, engine-only exposure report + settlement, slash receivable in NAV, insurance-only recovery collection | composite LLP router, hedge-router authority |
-| insurance | funds, targets, contributions, engine-only shortfall cover, share-based staked tranche, TWAP crank, pro-rata slashing into escrow, recovery sales, 14-day unstake, reward claims | — |
-| fee_router | per-bucket fee inbox PDAs, 80/10/5/5 split, optional oracle-operator share, ledger CPIs into vault + insurance | buy-and-burn |
-| power | index, normFactor accrual, daily carry, ShortVault mint/burn at 200%/150%, QuoteAMM buy / sell inside the band, authority `seed_amm` with ShortVault-backed tokens, split | batch liquidations, Crab (and routing sells to Crab redeem when the AMM's USDC side is empty), `redeem_at_index`, Token-2022 metadata, AMM inventory withdrawal |
-| factor | registry, signed publishes (methodology hash checked), liveness pause, 30-day methodology change, guardian pause | factor perps trade on the engine via an oracle feed signed by the same enclave key |
-| tickets | buy with distance/caps/stress budget, sell-back (session only), knock-out by live or late signed evidence, transfer, gifts | split handling, routing liquidity through `lvrt_vault` |
-| twins | vault + data-less signer PDA owning an engine margin account, Token-2022 mint, mint (engine deposit + 1× open via CPI at the engine's own fill) and redeem (close + withdraw via CPI at the exit fill, capped at what the slice released, never pause-gated), solvency view | Scaled UI Amount + metadata extensions, dividend / holding-fee multiplier steps, routing the 80% of twin fees to the fee router |
+| **Core** | Majors and liquid alts, cross or isolated margin | SOL, BTC, ETH, HYPE |
+| **Stocks** | US equities and ETFs with session-aware risk (tighter off-hours, last close when closed) | NVDA, TSLA, SPY, QQQ, COIN |
+| **Factors** | Rules-based baskets priced by an attested enclave | TRND, STDY, AIB, QLTY |
+| **Squared** | Price-squared exposure: PowerTokens from a QuoteAMM, shorts from a ShortVault | NVDA², SPY², SOL² |
+| **Tickets** | Knock-out tickets: the price paid is the maximum loss | NVDA-T, SOL-T |
+| **Twins** | Wallet tokens that track a stock 1:1 through a 1× perp position | lNVDA, lTSLA, lSPY, lQQQ, lCOIN, lSOL |
+| **Small Caps** | Micro-cap perps priced by an enclave, gated by feed depth | Listing gates only |
 
-Off-chain services (§13: keepers, enclaves, API/MCP/x402, receipts) are not
-part of this pass.
+**How it works**
 
-## Decisions and deviations worth reviewing
+1. **Deposit once.** USDC goes into a margin account on `lvrt_engine`; Core, Stocks and Factors perps trade
+   against it, cross or isolated. Squared, Tickets and Twins pay from the same wallet's USDC.
+2. **Trade on a verified price.** Each transaction carries the oracle's Ed25519-signed price report, which
+   `lvrt_oracle` verifies before the trade. The fill is bounded by your slippage limit, or nothing executes.
+   Market, limit, take-profit and stop-loss orders all run through the same fill path.
+3. **Stay within your rules.** Leverage, open-interest and session limits are enforced on-chain. Agents can
+   trade for you as delegates with per-order and daily budgets, never with withdrawal rights, and one signature
+   revokes them all.
+4. **Settle per family.** Trades move internal balances; a permissionless crank (`settle_shard`) moves the
+   real USDC between custody and that family's liquidity bucket. Fees go to the fee router.
+5. **Losses have an order.** A shortfall is covered by the family's insurance fund, then by the staked $LVRT
+   tranche (slashed pro rata), and only then by the bucket's liquidity providers. Withdrawals and exits are
+   never blocked by a pause.
 
-- **Clock resolution.** `Clock::unix_timestamp` is whole seconds, so "now" is
-  taken as the end of the current second (`ts·1000 + 999`) for the 800 ms /
-  2 s freshness windows. Message timestamps from the future by < 1 s pass.
-- **Inline prices = separate instruction in the same tx.** `post_prices`
-  precedes the engine instruction; a stale-but-newer post is a no-op, so a
-  trade never fails because a pusher got there first.
-- **OI caps are in base units**, notional caps in USDC.
-- **Borrow utilization** is measured against the market's OI caps until the
-  vault reports bucket utilization on-chain.
-- **Fee ledgers.** `distribute` pays the LP share into the bucket and the
-  insurance + staker shares into the fund's vault, then CPIs
-  `lvrt_vault::credit_fees` (raises `usdc_balance`, so NAV accrues) and
-  `lvrt_insurance::credit_fees` (fund balance + rewards per share). Both
-  accept only the fee router's signer PDA and check the USDC has arrived.
-  With no stakers, the staker share joins the insurance fund. Keepers and
-  liquidators are already paid by trigger and liquidation bounties; oracle
-  operators get an optional share of fees (timelock-set, ≤ 20%, default 0)
-  out of the workers' 80% before the LP remainder.
-- **Insurance carve-out comes out of the 80% workers' share** (the spec gives
-  both "80% to workers" and "20% of bucket fees to insurance").
-- **Settlement.** Trades only move internal balances; `settle_shard`
-  (permissionless) moves real USDC: fees → the bucket's fee inbox, and
-  `−trader PnL + carry − bad debt` between custody and the LLP bucket, then
-  `min(bad debt, insurance fund)` from insurance into the bucket, then the
-  staked tranche for the rest. Carry
-  (funding + borrow) is recorded per shard because funding nets to zero only
-  when OI is balanced — the pool is counterparty to the skew. Afterwards
-  custody == Σ collateral + queued profit (asserted in every settlement test).
-- **Staked tranche.** Stakes are shares of a per-bucket $LVRT pool, so a
-  slash is pro rata across every staker, including those cooling down to
-  unstake. Slashed $LVRT is valued at the published TWAP (a 30-minute
-  time-weighted EMA of the $LVRT oracle feed, refreshed by a permissionless
-  crank and required to be < 1 h old) less a 5% recovery discount, moved to
-  escrow and booked as a receivable in the bucket's NAV — so LPs don't take
-  the hit while it's being sold. Anyone can buy escrow at the current
-  recovery price; proceeds go straight into the bucket and net against the
-  receivable, so a later price move lands in NAV honestly. Bad debt beyond
-  the tranche's value reduces NAV. A slash that empties the pool bumps a
-  share epoch: old shares (and their unclaimed rewards) are worthless and
-  new stakers start 1:1. If slashing is needed and the TWAP is stale,
-  settlement fails with `StaleTwap`; the cranker refreshes it in the same
-  transaction.
-- **ADL** (GMX-v2-style, adapted to the spec's ranking). It may run only
-  while the bucket's trader uPnL is ≥ 95% of its capital (bucket USDC +
-  unsettled flows + insurance fund), computed on-chain over every market of
-  the bucket (`BucketRisk.market_count`; merges ≤ 25 slots old). Each call
-  closes just enough of one winner, at the exact mark with no fee, to return
-  to 90% — so the bucket stays able to pay. Rank = `pnl% × leverage`, which
-  reduces to PnL / position margin. A permissioned ADL operator picks the
-  targets; the chain enforces non-increasing rank within a round and logs
-  rank, ratios and reason. Full on-chain ranking would need enumerating all
-  positions and isn't attempted. A bucket can list ~17 markets before ADL
-  needs v0 transactions with lookup tables.
-- **Tickets keep their own USDC vault** for the TICKETS bucket for now.
-- **Limit orders reserve, not lock.** Placing one moves IM at the limit price
-  + the max fee + the keeper bounty from free collateral into the order (a
-  ledger move; the USDC stays in custody), so a fill can always be paid for and
-  `MarginAccount` keeps its layout. The reserve doesn't count as equity for
-  liquidations. Execution reuses the user open path (`open_core`) with the
-  limit as the price bound and no re-authorization (the owner or delegate
-  authorized at placement); the order's rent goes to the keeper, which pays the
-  position's.
-- **Twins.** Each twin's 1× long lives in an engine margin account owned by
-  a data-less signer PDA (the engine makes the opener pay the position's
-  rent, which a program-owned account can't). Mint and redeem price with the
-  engine's own functions (`fill_price`, `exit_quote`, `fee_for`) on the same
-  accounts, so the user pays exactly the fill + engine fee + 10 bps twin fee
-  and the program passes that fill as the engine's price bound. The twin fee
-  stays in the margin account as the funding buffer. A redemption pays the
-  exit fill but never more than the slice released (equity after the close
-  less what the rest of the long reserves), so an engine anti-staleness
-  haircut on a quick round trip falls on the redeemer. Profit is paid from
-  engine custody, which `settle_shard` refills from the STOCKS bucket.
-- **QuoteAMM pricing.** Trades run on the constant-product curve but never
-  fill under `I(1 − b)`: a sell gets at least the floor (paid from the AMM's
-  USDC, per the spec), and a buy against a pool quoting under the band fills
-  at the floor too, so inventory can't be bought cheap and sold back at the
-  floor. Buys that would pay over `I(1 + b)` are refused (route to ShortVault
-  mint). AMM inventory comes from `seed_amm` (timelock authority): USDC plus
-  PowerTokens the authority minted through its own ShortVault, so every token
-  stays backed; the pool's mark must sit inside the band after a seed.
-- **Corporate actions** are declared by a `ca_operator` key while the oracle
-  holds the market in `CA_PENDING`; positions are rescaled lazily per account.
-- Spec items marked (U) — Switchboard instruction layout, SIMD-0296 v1
-  transactions, vendor licensing — are not relied on anywhere.
+### Capital and fee flow
 
-## Before any mainnet use
+```mermaid
+flowchart TB
+  T["Traders"] -->|deposit USDC| M["Margin account<br/>(lvrt_engine)"]
+  M --> C["Engine custody"]
+  LP["Liquidity providers"] -->|deposit| B["Family LLP bucket<br/>(lvrt_vault)"]
+  ST["$LVRT stakers"] -->|stake| TR["Staked tranche<br/>(lvrt_insurance)"]
+  C <-->|"settle_shard:<br/>trader PnL + carry"| B
+  C -->|fees| FR["Fee router<br/>(lvrt_fee_router)"]
+  FR -->|"80% workers:<br/>bucket, insurance carve-out,<br/>keepers, oracle operators"| B
+  FR -->|"insurance carve-out<br/>(from the 80%)"| IF["Insurance fund"]
+  FR -->|"10%"| TY["Treasury"]
+  FR -->|"5%"| ST
+  FR -->|"5%"| BN["Burn"]
+  subgraph LOSS["Loss order on bad debt"]
+    L1["Insurance fund"] -.-> L2["Staked $LVRT tranche<br/>slashed pro rata"] -.-> L3["Bucket NAV"]
+  end
+```
 
-This is a skeleton: unaudited, with known TODOs in the money paths
-(Crab, Twins multiplier steps, buy-and-burn). Two audits, verified builds, the published
-signer policy and an end-to-end mainnet timelock rehearsal are launch gates
-in the spec (§14).
+### Architecture
+
+```mermaid
+flowchart LR
+  subgraph APP["web/"]
+    SITE["Site + dashboard<br/>(Next.js static export)"]
+  end
+  subgraph OFF["Off-chain (dev stack on test clusters)"]
+    OR["Oracle pusher<br/>signed price reports"]
+    KP["Keepers<br/>TP/SL, limits, knock-outs,<br/>shard merge, AMM arbitrage"]
+  end
+  subgraph CHAIN["Solana programs"]
+    ORC["lvrt_oracle<br/>signed-price verification"]
+    ENG["lvrt_engine<br/>margin, fills, funding,<br/>liquidation, ADL, orders"]
+    VLT["lvrt_vault<br/>LLP buckets"]
+    INS["lvrt_insurance<br/>funds + staked tranche"]
+    FEE["lvrt_fee_router"]
+    PWR["lvrt_power<br/>Squared"]
+    TKT["lvrt_tickets"]
+    TWN["lvrt_twins"]
+    FAC["lvrt_factor"]
+    GOV["lvrt_gov<br/>72h timelock"]
+  end
+  SITE -->|"quotes"| OR
+  SITE -->|"wallet-signed txs<br/>(price report inline)"| CHAIN
+  OR -->|"post_prices"| ORC
+  KP --> ENG
+  KP --> TKT
+  KP --> PWR
+  ORC --> ENG
+  ORC --> PWR
+  ORC --> TKT
+  ENG -->|settle_shard| VLT
+  ENG -->|fees| FEE
+  ENG -->|shortfall| INS
+  FEE --> VLT
+  FEE --> INS
+  TWN -->|"CPI: deposit, 1× open,<br/>close, withdraw"| ENG
+  FAC -->|"enclave-signed index"| ORC
+  GOV -.->|"parameter changes"| CHAIN
+```
+
+Prices are **pulled, not pushed**: every trade carries its own signed report, so an idle market costs nothing
+and a trade never waits on a pusher. Background posting is only needed for marks, liquidations and keepers.
+
+## Live devnet
+
+| | |
+|---|---|
+| Website | https://leveret.net |
+| Dashboard | https://leveret.net/dashboard/ |
+| Signed-quote API | https://leveret.net/api/quotes |
+| Cluster | Solana devnet, test USDC `H3tRv17bsBR3ccV5cT9nzt66uqm1wn66tT9rmAiAvrfi` |
+| Upgrade authority | `2FmzTtbkyfsrqgZ6jhLaTYmKVSyLQvzH52tR76MQzukG` |
+
+Connect a Solana wallet (Phantom, Solflare or Backpack) set to devnet, then use **Get test USDC** on the
+portfolio page.
+
+| Program | Address | Devnet |
+|---|---|---|
+| `lvrt_oracle` | `CFG1eAfxM49c4wAtL2xuorZkH1SB1cHdG8gJyGQUo2P8` | Deployed |
+| `lvrt_engine` | `DDwLPMgoXWAnCpDHYp1jSNg5bzW2mAJTvioqZHhyE3gD` | Deployed |
+| `lvrt_vault` | `AdFxcb9gcQTPKFo5MyU7MK5M18orENK4ZNfd7vWBKh3h` | Deployed |
+| `lvrt_insurance` | `DwkxsoEc8sQBBqBovGsHBDvrmomdcPqy9aK2zFcUZxhQ` | Deployed |
+| `lvrt_fee_router` | `GxQSsXZi4uYAieZWyMBvk8c7dBbkKUQWJ5CoHKUHUeQF` | Deployed |
+| `lvrt_power` | `ASwWQnPCrBMHryngMVhVzQTy4g5qeHena8kbDs3Z27N3` | Deployed |
+| `lvrt_tickets` | `38GVDZJaTDb28E8uwcYt23TjfdKESci4i7t1ywbQJVnM` | Deployed |
+| `lvrt_twins` | `7Q2Rsett1NBhw6SY2iFMNZbFznoXfkW2msJ3pjJPuzXC` | Deployed |
+| `lvrt_factor` | `3JWHCTuGFfP84R6waHT1ojGCa27TeAVM6WQmsJzZjpx9` | Built and tested, not deployed |
+| `lvrt_gov` | `2CvejCR36zZzmKgtBBP6G9jpVQCwwZ1AUe355t1Bci2E` | Built and tested, not deployed |
+
+Stock underlyings are closed at weekends (short mints and stock twin mints pause, exits never do), so SOL²,
+SOL-T and lSOL are listed to keep every family tradable around the clock.
+
+## Repository layout
+
+| Path | Purpose |
+|---|---|
+| [`programs/`](programs) | The 10 Anchor programs (Anchor 1.1.2): oracle, engine, vault, insurance, fee router, power, tickets, twins, factor, gov |
+| [`crates/lvrt_math`](crates/lvrt_math) | Pure fixed-point math with no Solana dependencies: oracle aggregation, fill price and skew premium, funding, borrow, margin, liquidation, power index, tickets, NAV, fee split |
+| [`crates/lvrt_common`](crates/lvrt_common) | Shared on-chain types: seeds, families, sessions, Ed25519 introspection and the signed `PriceMsg`, upgrade-authority guard |
+| [`tests/`](tests) | LiteSVM harness and integration tests for every program |
+| [`web/`](web) | Website and dashboard (Next.js 16, React 19, `@solana/kit`, Codama clients generated from the IDLs) |
+| [`web/dev/`](web/dev) | Test-cluster stack: idempotent bootstrap, dev oracle (signed quotes, faucet, keepers, AMM arbitrage), end-to-end scripts |
+| [`scripts/`](scripts) | WSL build (`wsl-build.sh`), local validator, devnet deploy |
+| [`scripts/vps/`](scripts/vps) | Server install, site-only and oracle-only deploys, nginx configs |
+| [`docs/`](docs) | [Implementation notes](docs/IMPLEMENTATION.md): per-program status, design decisions, test coverage |
+
+## Quick start (localnet)
+
+Programs build in WSL (Ubuntu 24.04) with Anchor 1.1.2 and Agave 3.1; the dev stack runs on Node 24.
+
+```bash
+# in WSL: build the test-cluster programs and start a validator with all of them
+scripts/wsl-build.sh devnet
+scripts/localnet.sh                               # runs in the foreground; use a second terminal below
+
+# anywhere with Node >= 24
+cd web && npm ci && npm run codegen && cd ..
+LVRT_CLUSTER=localnet node web/dev/bootstrap.ts   # mints, feeds, markets, buckets, AMMs, twins
+LVRT_CLUSTER=localnet node web/dev/oracle.ts      # signed quotes, faucet, keepers
+NEXT_PUBLIC_CLUSTER=localnet NEXT_PUBLIC_LIMIT_ORDERS=1 npm --prefix web run build && npm --prefix web run preview
+```
+
+Test-cluster builds use `--features devnet`, which swaps the USDC mint for a Leveret test mint so the faucet can
+mint; mainnet builds never include it. Full procedures: [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md#test-clusters).
+
+## Testing
+
+```bash
+scripts/wsl-build.sh test                         # SBF build, then math unit tests + LiteSVM suite
+LVRT_CLUSTER=localnet node web/dev/e2e.ts         # deposit, open, close, withdraw
+LVRT_CLUSTER=localnet node web/dev/e2e-products.ts  # Squared, Tickets, Twins round trips
+LVRT_CLUSTER=localnet node web/dev/e2e-limit.ts   # limit order reserve, cancel, keeper fill
+```
+
+**102 tests pass**: 56 math unit tests and 46 LiteSVM integration tests covering the one-transaction fill path,
+oracle source rules, liquidation, the loss waterfall and settlement invariants (custody equals the sum of trader
+ledgers after every settlement), ADL, staked-tranche slashing, fee routing, the QuoteAMM band, ShortVault ratios,
+knock-out evidence, twin backing and limit orders. The end-to-end scripts run against devnet and the live oracle
+as well. Every test is listed in [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md#what-the-tests-cover).
+
+## Security
+
+- **Not audited.** This is a first build pass; two independent audits are a launch gate in the spec. Do not
+  deploy it with real funds.
+- **Exits are never paused.** Withdrawals, closes and twin redemptions have no pause gate; the guardian can only
+  tighten risk parameters, never loosen them.
+- **Prices are verified on-chain.** Every price-dependent instruction reads a report signed by a registered
+  oracle key and checked through Ed25519 introspection in the same transaction, with freshness and source rules.
+- **Governance changes wait 72 hours** by design: parameter changes and upgrades queue through `lvrt_gov`. On
+  devnet `lvrt_gov` is not deployed yet and the deployer key is still the authority.
+
+## Roadmap
+
+| Phase | Scope | Status |
+|---|---|---|
+| 1 | All 10 programs: trading paths, settlement, ADL, insurance tranche, fee routing | Done |
+| 2 | Squared, Tickets, Twins and limit orders end to end, dashboard wired, live on devnet | Done |
+| 3 | Remaining `TODO`s: Crab vault, Twin dividend and holding-fee steps, buy-and-burn, Small Caps listings, ratio markets | Planned |
+| 4 | Permissionless keepers paid by bounties; LP-funded AMM inventory | Planned |
+| 5 | Two independent audits, verified builds, published signer policy, mainnet timelock rehearsal | Planned |
+| 6 | Guarded mainnet launch with low caps | Planned |
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) | Layout, website and dev stack, test clusters, every test, per-program status, design decisions |
+| [web/.env.example](web/.env.example) | Dashboard configuration (cluster, RPC, quote API, limit orders) |
+| [scripts/vps/install.sh](scripts/vps/install.sh) | Server install: static site releases, dev oracle service, nginx |
+| `Leveret Overview.pdf`, `Leveret Backend.pdf` | The product and protocol specs this build follows |
+
+## Disclaimer
+
+Leveret is software; it is not a broker, exchange, fund or investment adviser. The deployment at leveret.net
+runs on Solana devnet with test tokens only: nothing on it has monetary value, and no real funds should be sent
+to any address shown there. Twins are not shares, carry no voting rights and are not issued by any stock issuer.
+The programs have not been audited. Nothing in this repository is an offer, a solicitation or investment advice.
